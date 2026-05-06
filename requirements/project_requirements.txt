@@ -1,0 +1,24 @@
+# Dépendances du module
+colorama      # Permet l'affichage de la couleur dans la console
+
+# Dépendances pour les Tests (pytest et ses "plugins")
+pytest
+pytest-cov
+pytest-json
+pytest-json-report
+pytest-metadata
+
+# Dépendances pour la documentation
+sphinx
+sphinx-autobuild
+sphinx-rtd-theme
+ansi2html     # Convertisseur ANSI vers HTML
+
+# Dépendances de palm-denoisers installées avec pip
+numpy
+scipy
+pandas
+customtkinter
+matplotlib
+tifffile
+numba
