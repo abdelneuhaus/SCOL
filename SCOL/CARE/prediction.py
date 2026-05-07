@@ -8,7 +8,7 @@ from csbdeep.io import save_tiff_imagej_compatible
 
 
 
-def do_denoising_3D_fast(input_path, output_path, model_name, basedir='C:/Git/SCOL/models/data/SIMU/TEST/models'):
+def do_denoising_3D_fast(input_path:str, output_path:str, model_name:str, basedir:str='C:/Git/SCOL/models/data/SIMU/TEST/models'):
     """
     Perfom restoration of noisy image.
 

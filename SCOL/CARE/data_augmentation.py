@@ -1,7 +1,7 @@
 import numpy as np
 
 
-def apply_data_augmentation_to_npz(npz_path):
+def apply_data_augmentation_to_npz(npz_path:str):
     """
     Perfom data augmentation (8 times) of training images contained in NPZ file format.
 

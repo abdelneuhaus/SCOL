@@ -9,7 +9,7 @@ from csbdeep.models import CARE
 
 
 
-def check_training_3D(network, low_path, high_path, n=3):
+def check_training_3D(network:str, low_path:str, high_path:str, n:int=3):
     """
     Check training model using a pair of low and high images.
 
