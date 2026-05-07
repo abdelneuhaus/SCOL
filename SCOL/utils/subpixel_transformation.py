@@ -25,7 +25,7 @@ def read_coefficients_from_file(file_path: str):
 
 
 @njit(fastmath=True)
-def calculate_new_coordinates(x, y, cfx, cfy):
+def calculate_new_coordinates(x:float|int, y:float|int, cfx:np.ndarray, cfy:np.ndarray):
     """
     Compute third order polynomial for x and y coordinates using coefficients. Can be done on int or float.
 
@@ -59,7 +59,7 @@ def calculate_new_coordinates(x, y, cfx, cfy):
 
 
 @njit(fastmath=True)  # dont put parallel true to not overwrite part of image
-def shift_image_with_interpolation(image, cfx, cfy):
+def shift_image_with_interpolation(image:np.ndarray, cfx:np.ndarray, cfy:np.ndarray):
     """
     Apply subpixel transformation to one image by forward mapping. 
 
@@ -117,7 +117,7 @@ def shift_image_with_interpolation(image, cfx, cfy):
 
 
 @njit(parallel=True, fastmath=True)
-def process_stack(image_stack, cfx, cfy):
+def process_stack(image_stack:np.ndarray, cfx:np.ndarray, cfy:np.ndarray):
     """
     Perform subpixel alignment on the whole XYT stack. 
 
@@ -142,7 +142,7 @@ def process_stack(image_stack, cfx, cfy):
 
 
 
-def main(image_path, coeff_path, output_path):
+def main(image_path:str, coeff_path:str, output_path:str):
     """
     Main function.
     
