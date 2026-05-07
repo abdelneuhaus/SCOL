@@ -1,4 +1,5 @@
-from preprocessing import do_data_processing, apply_data_augmentation_to_npz, inspect_channels_in_npz
+from preprocessing import do_data_processing, inspect_channels_in_npz
+from data_augmentation import apply_data_augmentation_to_npz
 from training import do_training
 
 
