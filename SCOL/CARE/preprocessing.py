@@ -8,14 +8,14 @@ from csbdeep.utils import plot_some
 
 
 
-def do_data_processing(basepath, save_path="", t_window_low=3, t_window_high=1, simulation=False):
+def do_data_processing(basepath:str, save_path:str="", t_window_low:int=3, t_window_high:int=3, simulation:bool=False):
     """
     Prepare the .npz data for CARE training. 
     Adapted from https://github.com/CSBDeep/CSBDeep code. 
 
     Args:
         basepath (str): path to NPZ file (training data).
-        savepath (str):
+        savepath (str): path to save the NPZ file.
         t_window_low (int): number of consecutive frames to use to create noisy training data (X)
         t_window_high (int): number of consecutive frames to use to create target training data (Y)
         simulation (bool): if True, ignore temporal window (1-to-1). To use for simulation images only.

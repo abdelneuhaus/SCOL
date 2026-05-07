@@ -6,13 +6,13 @@ from training import do_training
 full_image = 'data/SIMU/TEST/Training'
 base_save_in = str(full_image).replace('/Training', '/models/')
 
-# Hyperparameters grid
+# hyperparameters grid
 kernel_size = 3
 unet_depth = 1
 unet_first_layer = 64
 list_config = []
 
-# Build configurations
+# build configuration
 model_name = f"k{kernel_size}_d{unet_depth}_f{unet_first_layer}"
 save_in = f"{base_save_in}{model_name}"
 
