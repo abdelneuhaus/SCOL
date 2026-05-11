@@ -2,6 +2,7 @@ import os
 import json
 
 import numpy as np
+import tkinter.filedialog as fd
 
 
 def save_parameters(filename:str, frames:int, nb_emitters:int, intensity:float|int, 
@@ -66,3 +67,28 @@ def save_data(points, filename):
     json_object = json.dumps(dictionary, indent = 4)
     with open(filename+".json", "w") as outfile:
         outfile.write(json_object)
+
+
+
+def load_molecule_data():
+    """
+    Open a file dialog to load and preprocess molecule data from a JSON file.
+
+    Returns:
+        dict: A dictionary of molecule data where keys are integer IDs
+    """
+
+    filetypes = (('JSON files', '*.json'), ('All files', '*.*'))
+    try:
+        load_data = fd.askopenfilename(title='Open a file', initialdir='.', filetypes=filetypes)
+        with open(load_data, 'r') as f:
+            data_loaded = json.load(f)
+        data_loaded = {int(k): v for k, v in data_loaded.items()}
+        if '_diffusion' in load_data:
+            for i in range(len(data_loaded)):
+                data_loaded[i]['on_times'] = [data_loaded[i]['frame']]
+                data_loaded[i]['shift'] = 0
+        print("Done")
+        return data_loaded
+    except:
+        print("No JSON loaded")

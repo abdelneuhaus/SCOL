@@ -1,20 +1,26 @@
-import json
 import tifffile
 import time as time
 import numpy as np
-import tkinter.filedialog as fd
 
 from PIL import Image
 
 from utils import generate_intensity, generate_on_times, add_noise, distance
-from saving import save_parameters, save_data
+from utils.simulator.io import save_parameters, save_data, load_molecule_data
 from generate_one_frame import generate_one_frame
 
 
 
 def load_3d_mask_coords(path, output_size=(512, 512)):
     """
-    
+    Extract spatial coordinates from a binary mask after resizing.
+
+    Args:
+        path (str): Path to the input .tif file.
+        output_size (tuple[int, int]): Target (width, height) for resizing the mask. 
+
+    Returns:
+        list[tuple[int, int, int]]: A list of (z, y, x) coordinates where the mask is active. 
+        Note: z is currently hardcoded to 0, but can be changed to read 3D mask
     """
     stack = tifffile.imread(path)  # shape (Z,H,W)
     coords = []
@@ -216,32 +222,6 @@ def generate_stack(
             sd_bckg_value
         )
 
-
-
-def load_molecule_data():
-    filetypes = (('JSON files', '*.json'), ('All files', '*.*'))
-    try:
-        load_data = fd.askopenfilename(
-            title='Open a file',
-            initialdir='.',
-            filetypes=filetypes
-        )
-
-        with open(load_data, 'r') as f:
-            data_loaded = json.load(f)
-
-        data_loaded = {int(k): v for k, v in data_loaded.items()}
-
-        if '_diffusion' in load_data:
-            for i in range(len(data_loaded)):
-                data_loaded[i]['on_times'] = [data_loaded[i]['frame']]
-                data_loaded[i]['shift'] = 0
-
-        print("Done")
-        return data_loaded
-
-    except:
-        print("No JSON loaded")
 
 
 # MAIN
