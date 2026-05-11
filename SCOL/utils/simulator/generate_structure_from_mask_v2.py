@@ -6,13 +6,16 @@ import tkinter.filedialog as fd
 
 from PIL import Image
 
-from utils import generate_intensity, generate_on_times, add_noise, save_parameters, save_data, distance
+from utils import generate_intensity, generate_on_times, add_noise, distance
+from saving import save_parameters, save_data
 from generate_one_frame import generate_one_frame
 
 
 
 def load_3d_mask_coords(path, output_size=(512, 512)):
-    """Charge un masque 3D et retourne toutes les coordonnées (z,y,x) où mask=1."""
+    """
+    
+    """
     stack = tifffile.imread(path)  # shape (Z,H,W)
     coords = []
     img = Image.fromarray(stack)
@@ -27,25 +30,32 @@ def load_3d_mask_coords(path, output_size=(512, 512)):
 
 
 def generate_emitters_from_coord_list(coord_list, size_x, size_y, path, rng=None):
-    """Retourne une coordonnée (x,y) mise à l'échelle de la taille finale."""
+    """
+    Generate a single emitter coordinates by sampling and rescaling from a reference stack. 
+
+    Args:
+        coord_list (list[tuple]): List of (z, y, x) coordinates to sample from.
+        size_x (int): Target width of the simulation grid.
+        size_y (int): Target height of the simulation grid.
+        path (str): Path to the reference .tif stack to determine original dimensions.
+        rng (np.random.Generator, optional): NumPy random number generator for reproducibility. 
+
+    Returns:
+        list[float]: A list containing the rescaled [x, y] coordinates.
+    """
     stack = tifffile.imread(path)  # (Z,H,W)
     original_y = stack.shape[0]
     original_x = stack.shape[1]
     factor_x = original_x / size_x
     factor_y = original_y / size_y
-
     if rng is None:
         rng = np.random.default_rng()
-
     index = rng.integers(0, len(coord_list))
     z, y, x = coord_list[index]
-
     x_f = x + rng.uniform(0, 1)
     y_f = y + rng.uniform(0, 1)
 
     return [float(x_f / factor_x), float(y_f / factor_y)]
-
-
 
 
 
@@ -61,7 +71,6 @@ def create_molecules_data(
     off_length_max=3,
     number_blink_min=1,
     number_blink_max=3,
-    edge=0,
     min_distance=5,
     mask_path="SMLM_1280_mask.tif",
     no_overlap=True
@@ -140,7 +149,6 @@ def generate_stack(
     blink_max=3,
     background_value=750,
     sd_bckg_value=6,
-    edge=0,
     save=True,
     is_loaded=False,
     loaded_data=None,
@@ -162,7 +170,6 @@ def generate_stack(
         off_length_max=length_max,
         number_blink_min=blink_min,
         number_blink_max=blink_max,
-        edge=edge,
         mask_path=mask_path,
         no_overlap=no_overlap
     )
@@ -178,7 +185,7 @@ def generate_stack(
     with tifffile.TiffWriter(filename) as tif:
         toSave = []
         for i in range(frames):
-            data, points = generate_one_frame(points, x_image, y_image, frame=i, sigma=1.0, trunc=10)
+            data, points = generate_one_frame(points, x_image, y_image, frame=i, sigma=1.0, trunc=6)
 
             to_save_points = [
                 {
@@ -206,8 +213,7 @@ def generate_stack(
             blink_min,
             blink_max,
             background_value,
-            sd_bckg_value,
-            edge
+            sd_bckg_value
         )
 
 
@@ -249,7 +255,6 @@ BLINK_MIN = 2
 BLINK_MAX = 6
 BACKGROUND_VALUE = 100
 SD_BCKG_VALUE = 25
-EDGE = 20
 SAVE = False
 IS_LOADED = True
 LOADED_DATA =  load_molecule_data()
@@ -273,7 +278,6 @@ generate_stack(
     blink_max=BLINK_MAX,
     background_value=BACKGROUND_VALUE,
     sd_bckg_value=SD_BCKG_VALUE,
-    edge=EDGE,
     save=SAVE,
     is_loaded=IS_LOADED,
     loaded_data=LOADED_DATA,
