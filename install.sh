@@ -18,6 +18,7 @@ python3.9 -m venv venv_aydin
 source venv_aydin/bin/activate
 python -m pip install --upgrade pip
 pip install -r ./requirements/aydin_requirements.txt
+pip install tensorflow-macos==2.10.0 tensorflow-metal==0.6.0
 deactivate
 
 echo ""
