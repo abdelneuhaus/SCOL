@@ -1,51 +1,8 @@
-import random
+import tifffile
 import numpy as np
 
+from PIL import Image
 
-def generate_intensity(high:float|int=500, low:float|int=800):
-    """
-    Generate an int from a range.
-
-    Args:
-        high (float|int): lower bound of the intensity range
-        low (float|int): higher bound of the intensity range
-
-    Returns:
-        int corresponding to intensity value.
-    """
-    return int(np.random.randint(high, low))
-
-
-
-
-def generate_on_times(frames, randomize=True, off_length_min=1, off_length_max=3, number_blink_min=1, number_blink_max=3):
-    """
-    Generate a list of frame indices where an emitter is active (ON state).
-
-    Args:
-        frames (int): Total number of frames in the simulation.
-        randomize (bool): If True, generates random blinking events throughout the sequence.
-            If False, returns a continuous block of the last 11 frames. Defaults to True.
-        off_length_min (int): Minimum duration of a single ON event (in frames).
-        off_length_max (int): Maximum duration of a single ON event (in frames).
-        number_blink_min (int): Minimum number of blinking events to generate.
-        number_blink_max (int): Maximum number of blinking events to generate.
-
-    Returns:
-        list[int]: A sorted list of unique frame indices where the emitter is ON.
-    """
-
-    if not randomize:
-        return list(range(max(0, frames - 10), frames + 1))
-    
-    blink_set = set()
-    number_blink = random.randint(number_blink_min, number_blink_max)
-    for _ in range(number_blink):
-        length = random.randint(off_length_min, off_length_max)
-        start = random.randint(0, max(0, frames - length))
-        blink_set.update(range(start, start + length))
-    return sorted(blink_set)
-    
 
 
 def add_noise(image_to_noised:np.ndarray, background:float|int, sd:float|int):
@@ -78,3 +35,28 @@ def distance(p1, p2):
         float: The Euclidean distance (L2 norm) between p1 and p2.
     """
     return np.linalg.norm(np.array(p1) - np.array(p2))
+
+
+
+def load_3d_mask_coords(path, output_size=(512, 512)):
+    """
+    Extract spatial coordinates from a binary mask after resizing.
+
+    Args:
+        path (str): Path to the input .tif file.
+        output_size (tuple[int, int]): Target (width, height) for resizing the mask. 
+
+    Returns:
+        list[tuple[int, int, int]]: A list of (z, y, x) coordinates where the mask is active. 
+        Note: z is currently hardcoded to 0, but can be changed to read 3D mask
+    """
+    stack = tifffile.imread(path)  # shape (Z,H,W)
+    coords = []
+    img = Image.fromarray(stack)
+    img = img.convert("L")
+    img_resized = img.resize(output_size, resample=Image.Resampling.BILINEAR)
+    arr = np.array(img_resized)
+    binary_mask = (arr > (arr.max() * 0.5)).astype(np.uint8)
+    ys, xs = np.where(binary_mask == 1)
+    coords.extend([(0, y, x) for y, x in zip(ys, xs)])
+    return coords
