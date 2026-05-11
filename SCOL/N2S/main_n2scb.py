@@ -22,7 +22,7 @@ from aydin.regression.cb import CBRegressor
 
 
 # Advanced Noise2Self with preprocessing and CatBoost network
-noisy_image = tiff.imread("data/Cell01_low.tif")
+noisy_image = tiff.imread("data/SIMULATION/Training/Low.tif")
 print("Image shape:", noisy_image.shape)
 
 # Transforms (dans l’ordre du JSON)
@@ -108,4 +108,4 @@ print(f"Restoration took {(end-debut)/60:.2f} minutes")
 plt.imshow(denoised_image[400], cmap="gray")
 plt.show()
 
-tiff.imwrite("data/aydin.tif", np.array(denoised_image, dtype="uint16"))
+tiff.imwrite("data/SIMULATION/Prediction/n2s.tif", np.array(denoised_image, dtype="uint16"))
