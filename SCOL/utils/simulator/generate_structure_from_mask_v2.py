@@ -4,64 +4,10 @@ import numpy as np
 
 from PIL import Image
 
-from utils import generate_intensity, generate_on_times, add_noise, distance
+from utils import add_noise, distance, load_3d_mask_coords
+from generators import generate_intensity, generate_on_times, generate_one_frame, generate_emitters_from_coord_list
 from utils.simulator.io import save_parameters, save_data, load_molecule_data
-from generate_one_frame import generate_one_frame
 
-
-
-def load_3d_mask_coords(path, output_size=(512, 512)):
-    """
-    Extract spatial coordinates from a binary mask after resizing.
-
-    Args:
-        path (str): Path to the input .tif file.
-        output_size (tuple[int, int]): Target (width, height) for resizing the mask. 
-
-    Returns:
-        list[tuple[int, int, int]]: A list of (z, y, x) coordinates where the mask is active. 
-        Note: z is currently hardcoded to 0, but can be changed to read 3D mask
-    """
-    stack = tifffile.imread(path)  # shape (Z,H,W)
-    coords = []
-    img = Image.fromarray(stack)
-    img = img.convert("L")
-    img_resized = img.resize(output_size, resample=Image.Resampling.BILINEAR)
-    arr = np.array(img_resized)
-    binary_mask = (arr > (arr.max() * 0.5)).astype(np.uint8)
-    ys, xs = np.where(binary_mask == 1)
-    coords.extend([(0, y, x) for y, x in zip(ys, xs)])
-    return coords
-
-
-
-def generate_emitters_from_coord_list(coord_list, size_x, size_y, path, rng=None):
-    """
-    Generate a single emitter coordinates by sampling and rescaling from a reference stack. 
-
-    Args:
-        coord_list (list[tuple]): List of (z, y, x) coordinates to sample from.
-        size_x (int): Target width of the simulation grid.
-        size_y (int): Target height of the simulation grid.
-        path (str): Path to the reference .tif stack to determine original dimensions.
-        rng (np.random.Generator, optional): NumPy random number generator for reproducibility. 
-
-    Returns:
-        list[float]: A list containing the rescaled [x, y] coordinates.
-    """
-    stack = tifffile.imread(path)  # (Z,H,W)
-    original_y = stack.shape[0]
-    original_x = stack.shape[1]
-    factor_x = original_x / size_x
-    factor_y = original_y / size_y
-    if rng is None:
-        rng = np.random.default_rng()
-    index = rng.integers(0, len(coord_list))
-    z, y, x = coord_list[index]
-    x_f = x + rng.uniform(0, 1)
-    y_f = y + rng.uniform(0, 1)
-
-    return [float(x_f / factor_x), float(y_f / factor_y)]
 
 
 
