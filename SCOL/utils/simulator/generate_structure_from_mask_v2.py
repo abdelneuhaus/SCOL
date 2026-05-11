@@ -1,12 +1,12 @@
-import numpy as np
-import tifffile
 import json
+import tifffile
 import time as time
+import numpy as np
 import tkinter.filedialog as fd
+
 from PIL import Image
 
-from utils import generate_intensity, save_parameters, add_noise, generate_on_times
-from save_data import save_data
+from utils import generate_intensity, generate_on_times, add_noise, save_parameters, save_data, distance
 from generate_one_frame import generate_one_frame
 
 
@@ -46,8 +46,7 @@ def generate_emitters_from_coord_list(coord_list, size_x, size_y, path, rng=None
     return [float(x_f / factor_x), float(y_f / factor_y)]
 
 
-def distance(p1, p2):
-    return np.linalg.norm(np.array(p1) - np.array(p2))
+
 
 
 def create_molecules_data(
@@ -179,7 +178,7 @@ def generate_stack(
     with tifffile.TiffWriter(filename) as tif:
         toSave = []
         for i in range(frames):
-            data, points = generate_one_frame(points, x_image, y_image, frame=i, sigma=1.0, trunc=10, is_loaded=False)
+            data, points = generate_one_frame(points, x_image, y_image, frame=i, sigma=1.0, trunc=10)
 
             to_save_points = [
                 {
