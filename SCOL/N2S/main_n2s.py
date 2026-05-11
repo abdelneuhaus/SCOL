@@ -14,7 +14,7 @@ from aydin.restoration.denoise.noise2selffgr import Noise2SelfFGR
 
 
 # Basic Noise2Self using the “Feature Generation & Regression” approach-based restoration
-noisy_image = tiff.imread("C:/Git/SCOL/data/GROUND_TRUTH/SIMULATION/metrics_simu/fixed/noisy.tif")
+noisy_image = tiff.imread("data/SIMULATION/Training/Low.tif")
 print("Image shape:", noisy_image.shape)
 debut = time.time()
 n2s = Noise2SelfFGR()
@@ -25,4 +25,4 @@ print(f"Restoration took {(end-debut)/60} minutes")
 
 plt.imshow(denoised_image[0], cmap="gray")
 plt.show()
-tiff.imwrite("C:/Git/SCOL/data/GROUND_TRUTH/SIMULATION/metrics_simu/fixed/noisy_aydin.tif", denoised_image.astype("float16"))
+tiff.imwrite("data/SIMULATION/Prediction/n2s.tif", denoised_image.astype("float16"))
