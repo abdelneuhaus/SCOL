@@ -18,6 +18,7 @@ def generate_intensity(high:Union[float, int]=500, low:Union[float, int]=800):
     Returns:
         int corresponding to intensity value.
     """
+
     return int(np.random.randint(high, low))
 
 
@@ -70,17 +71,20 @@ def add_gaussian_to_frame_precise(frame, amplitude, x0, y0, sigma=1.0, trunc=5):
     Returns:
         None: The function modifies the 'frame' argument in-place.
     """
-    height, width = frame.shape
-    x_min = max(0, int(np.floor(x0 - trunc * sigma)))
-    x_max = min(width, int(np.ceil(x0 + trunc * sigma + 1)))
-    y_min = max(0, int(np.floor(y0 - trunc * sigma)))
-    y_max = min(height, int(np.ceil(y0 + trunc * sigma + 1)))
 
-    x_grid, y_grid = np.meshgrid(np.arange(x_min, x_max),
-                                 np.arange(y_min, y_max),
-                                 indexing='xy')
+    radius = int(trunc * sigma) # patch radius
+    x_min_th, x_max_th = int(x0) - radius, int(x0) + radius + 1
+    y_min_th, y_max_th = int(y0) - radius, int(y0) + radius + 1
+    x_min = max(0, x_min_th)
+    x_max = min(frame.shape[1], x_max_th)
+    y_min = max(0, y_min_th)
+    y_max = min(frame.shape[0], y_max_th)
 
-    gauss = amplitude * np.exp(-((x_grid - x0) ** 2 + (y_grid - y0) ** 2) / (2 * sigma ** 2))
+    if x_min >= x_max or y_min >= y_max:
+        return 
+    
+    x_grid, y_grid = np.meshgrid(np.arange(x_min, x_max), np.arange(y_min, y_max))
+    gauss = amplitude * np.exp(-((x_grid - x0)**2 + (y_grid - y0)**2) / (2 * sigma**2))
     frame[y_min:y_max, x_min:x_max] += gauss
 
 
@@ -133,7 +137,7 @@ def generate_emitters_from_coord_list(coord_list, size_x, size_y, path, rng=None
     """
     if rng is None:
         rng = np.random.default_rng()
-        
+
     if coord_list is None:
         x_f = rng.uniform(0, size_x)
         y_f = rng.uniform(0, size_y)
@@ -159,7 +163,8 @@ def generate_emitters_from_coord_list(coord_list, size_x, size_y, path, rng=None
 def generate_molecules_data(frames, nbr_molecules:int, size_x:int=64, size_y:int=64, randomize:bool=True, 
                           min_intensity:Union[float, int]=500, max_intensity:Union[float, int]=600, 
                           off_length_min:int=1, off_length_max:int=3, number_blink_min:int=1, number_blink_max:int=3, 
-                          min_distance:int=5, mask_path:str=None, no_overlap:bool=True):
+                          min_distance:int=5, mask_path:str=None, no_overlap:bool=True, 
+                          diff_coeffs:Union[list, np.ndarray]=[0.0], proportions:Union[list, np.ndarray]=[1.0]):
     """
     Generate a full dataset of emitters with spatial and temporal constraints.
 
@@ -177,7 +182,9 @@ def generate_molecules_data(frames, nbr_molecules:int, size_x:int=64, size_y:int
         number_blink_max (int): Maximum number of blinks per molecule. Defaults to 3.
         min_distance (int): Minimum Euclidean distance required between two emitters active in the same frame. Defaults to 5.
         mask_path (str): Path to the reference mask TIFF file. 
-        no_overlap (bool): If True, enforces the min_distance constraint. 
+        no_overlap (bool): If True, enforces the min_distance constraint.
+        diff_coeffs (Union[list, np.ndarray]): List of diffusion coefficient(s). Can handle populations.
+        proportions (Union[list, np.ndarray]): List of proportions of each population. Sum must equals 1. Should be same length as diff_coeffs.
 
     Returns:
         dict: A dictionary where keys are molecule IDs (int) and values individual molecules metadata.
@@ -191,6 +198,9 @@ def generate_molecules_data(frames, nbr_molecules:int, size_x:int=64, size_y:int
     mask3d = load_3d_mask_coords(mask_path)
     frame_dict = {f: [] for f in range(frames)}
 
+    rng = np.random.default_rng()
+    assigned_D = rng.choice(diff_coeffs, size=nbr_molecules, p=proportions)
+
     for i in range(nbr_molecules):
         on_times = generate_on_times(frames, randomize, off_length_min, off_length_max, number_blink_min, number_blink_max)
         data[i] = {
@@ -198,7 +208,8 @@ def generate_molecules_data(frames, nbr_molecules:int, size_x:int=64, size_y:int
             'intensity': generate_intensity(min_intensity, max_intensity),
             'on_times': on_times,
             'shift': 0,
-            'model': None
+            'model': None,
+            'D': float(assigned_D[i])
         }
 
     for mol_id, mol_data in data.items():
