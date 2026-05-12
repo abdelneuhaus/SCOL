@@ -14,9 +14,10 @@ def SMLM_simulation(frames:np.ndarray, nb_emitters:int, filename:str, randomize:
                     min_intensity:Union[float, int]=500, max_intensity:Union[float, int]=600, ratio:float=0.05, 
                     x_image:int=64, y_image:int=64, length_min:int=1, length_max:int=3, 
                     blink_min:int=1, blink_max:int=3, background_value:Union[float, int]=750, sd_bckg_value:Union[float, int]=6, 
-                    is_loaded:bool=False, mask_path:str=None, no_overlap:bool=True, min_distance:int=5):
+                    is_loaded:bool=False, mask_path:str=None, no_overlap:bool=True, min_distance:int=5,
+                    diff_coeffs:Union[list, np.ndarray]=[0.0], proportions:Union[list, np.ndarray]=[1.0], frame_time:float=0.03, pixel_size:float=0.1):
     """
-    Orchestrates the full SMLM (Single Molecule Localization Microscopy) simulation pipeline.
+    Orchestrates the full SMLM simulation pipeline.
 
     Args:
         frames (int): Total number of frames to simulate.
@@ -38,6 +39,10 @@ def SMLM_simulation(frames:np.ndarray, nb_emitters:int, filename:str, randomize:
         mask_path (str, optional): Path to a TIFF mask for constrained spatial sampling.
         no_overlap (bool): If True, enforces a minimum distance between molecules active in the same frame.
         min_distance (int): The minimum distance (in pixels) required if no_overlap is True.
+        diff_coeffs (Union[list, np.ndarray]): List of diffusion coefficient(s). Can handle populations.
+        proportions (Union[list, np.ndarray]): List of proportions of each population. Sum must equals 1. Should be same size as diff_coeffs.
+        frame_time (float): Pseudo frame rate in ms to compute brownian displacement.
+        pixel_size (float): Pseudo pixel size in μm to compute brownian displacement.
 
     Returns:
         None: The function saves the results (.tif, .json, and parameters file).
@@ -51,30 +56,49 @@ def SMLM_simulation(frames:np.ndarray, nb_emitters:int, filename:str, randomize:
     else:
         points = generate_molecules_data(frames, nb_emitters, x_image, y_image, randomize, 
                                        min_intensity, max_intensity, length_min, length_max, 
-                                       blink_min, blink_max, min_distance, mask_path, no_overlap)
+                                       blink_min, blink_max, min_distance, mask_path, no_overlap,
+                                       diff_coeffs, proportions)
+        for mol in points.values():
+            mol['trajectory'] = {0: list(mol['coordinates'])}
 
     active_in_frame = {f: [] for f in range(frames)}
     for m_id, m_data in points.items():
         for f in m_data['on_times']:
             if 0 <= f < frames:
                 active_in_frame[f].append(m_id)
+                
     full_metadata = []
+    rng = np.random.default_rng()
+    image_stack = [] 
+    for i in range(frames):
+        if is_loaded:
+            for m_id, mol in points.items():
+                if str(i) in mol['trajectory']: 
+                    mol['coordinates'] = mol['trajectory'][str(i)]
 
-    with tifffile.TiffWriter(filename) as tif:
-        for i in range(frames):
-            img, points = generate_one_frame(points, x_image, y_image, frame=i, sigma=1.0, trunc=6)
-            for m_id in active_in_frame[i]:
-                mol = points[m_id]
-                full_metadata.append({
-                    'frame': i,
-                    'index': m_id,
-                    'coordinates': list(mol['coordinates']),
-                    'intensity': int(mol['intensity'])
-                })
+        img, points = generate_one_frame(points, x_image, y_image, frame=i, sigma=1.0, trunc=6)        
+        for m_id in active_in_frame[i]:
+            mol = points[m_id]
+            full_metadata.append({
+                'frame': i,
+                'index': m_id,
+                'coordinates': list(mol['coordinates']),
+                'intensity': int(mol['intensity'])
+            })
 
-            out = add_noise(img, background_value, sd_bckg_value)
-            tif.write(out.astype('uint16'), photometric='minisblack')
+        if not is_loaded:
+            for m_id, mol in points.items():
+                if mol.get('D', 0.0) > 0:
+                    sigma_jump = np.sqrt(2 * mol['D'] * frame_time) / pixel_size
+                    mol['coordinates'][0] += rng.normal(0, sigma_jump)
+                    mol['coordinates'][1] += rng.normal(0, sigma_jump)
+                mol['trajectory'][i+1] = list(mol['coordinates'])
 
+        out = add_noise(img, background_value, sd_bckg_value)
+        image_stack.append(out.astype('uint16')) 
+    stack_array = np.array(image_stack) 
+    
+    tifffile.imwrite(filename, stack_array, imagej=True, photometric='minisblack')
     save_data(points, filename)
     save_parameters(filename, frames, nb_emitters, max_intensity, length_min, length_max, 
                     blink_min, blink_max, background_value, sd_bckg_value)
@@ -83,26 +107,31 @@ def SMLM_simulation(frames:np.ndarray, nb_emitters:int, filename:str, randomize:
 
 # MAIN
 FRAMES = 1000
-N_EMITTERS = 500
-FILENAME = "high.tif"
+N_EMITTERS = 100
+FILENAME = "low.tif"
 RANDOMIZE = True
 MIN_INTENSITY, MAX_INTENSITY = 700, 800
-RATIO = 0.05, # corresponding to 5% SNR
+RATIO = 0.5 # corresponding to 5% SNR, ratio of 1.0 means same SNR
 X_IMAGE, Y_IMAGE = 128, 128
-LENGTH_MIN = 2
-LENGTH_MAX = 4
+LENGTH_MIN = 4
+LENGTH_MAX = 40
 BLINK_MIN = 2
-BLINK_MAX = 6
+BLINK_MAX = 5
 BACKGROUND_VALUE = 100
 SD_BCKG_VALUE = 25
 IS_LOADED = False
 MASK_PATH = None
 NO_OVERLAP = False
 MIN_DISTANCE = 5
+DIFF_COEFF=[0.0, 0.02, 0.06]
+PROPORTIONS=[0.4, 0.3, 0.3]
+FRAME_TIME=0.02
+PIXEL_SIZE=0.16
 
 start = time.time()
 SMLM_simulation(FRAMES, N_EMITTERS, FILENAME, RANDOMIZE, MIN_INTENSITY, MAX_INTENSITY, RATIO, 
                 X_IMAGE, Y_IMAGE, LENGTH_MIN, LENGTH_MAX, BLINK_MIN, BLINK_MAX, 
-                BACKGROUND_VALUE, SD_BCKG_VALUE, IS_LOADED, MASK_PATH, NO_OVERLAP, MIN_DISTANCE)
+                BACKGROUND_VALUE, SD_BCKG_VALUE, IS_LOADED, MASK_PATH, NO_OVERLAP, MIN_DISTANCE,
+                DIFF_COEFF, PROPORTIONS, FRAME_TIME, PIXEL_SIZE)
 end = time.time()
 print("Time elapsed:", end - start, "seconds")

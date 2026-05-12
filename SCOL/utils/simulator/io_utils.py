@@ -63,12 +63,12 @@ def save_data(points, filename:str):
     dictionary = dict()
     for mol_id, mol_data in points.items():        
         dictionary[mol_id] = {
-            'coordinates': mol_data['coordinates'],
+            'trajectory': mol_data.get('trajectory', {}), 
             'intensity': int(mol_data['intensity']),
             'on_times': np.array(mol_data['on_times'], dtype='uint16').tolist(),
-            'shift': mol_data['shift']
+            'shift': mol_data.get('shift', 0),
+            'D': mol_data.get('D', 0.0)
         }
-    
     json_object = json.dumps(dictionary, indent=4)
     with open(filename + ".json", "w") as outfile:
         outfile.write(json_object)
@@ -88,15 +88,27 @@ def load_molecule_data():
         load_data = fd.askopenfilename(title='Open a file', initialdir='.', filetypes=filetypes)
         with open(load_data, 'r') as f:
             data_loaded = json.load(f)
+            
         data_loaded = {int(k): v for k, v in data_loaded.items()}
+        for mol_id, mol_data in data_loaded.items():
+            if 'trajectory' in mol_data and "0" in mol_data['trajectory']:
+                mol_data['coordinates'] = mol_data['trajectory']["0"]
+            else:
+                mol_data['trajectory'] = {"0": mol_data.get('coordinates', [0,0])}
+                mol_data['coordinates'] = mol_data['trajectory']["0"]
+
         if '_diffusion' in load_data:
             for i in range(len(data_loaded)):
                 data_loaded[i]['on_times'] = [data_loaded[i]['frame']]
                 data_loaded[i]['shift'] = 0
-        print("Done")
+    
+        print(f"Fichier {load_data} chargé avec succès.")
         return data_loaded
-    except:
-        print("No JSON loaded")
+        
+    except Exception as e:
+        print(f"No JSON loaded. Error: {e}")
+        return None
+
 
 
 def load_3d_mask_coords(path, output_size=(512, 512)):
@@ -111,6 +123,7 @@ def load_3d_mask_coords(path, output_size=(512, 512)):
         list[tuple[int, int, int]]: A list of (z, y, x) coordinates where the mask is active. 
         Note: z is currently hardcoded to 0, but can be changed to read 3D mask
     """
+    
     if path is None:
         return None
     
