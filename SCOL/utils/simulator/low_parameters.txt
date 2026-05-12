@@ -1,0 +1,6 @@
+Number of frames: 50
+Numbers of emitters: 50
+Integrated Intensity: 60
+Background value: 100, sd: 25
+ON duration: [2, 4]
+Number of blinks: [2, 6]

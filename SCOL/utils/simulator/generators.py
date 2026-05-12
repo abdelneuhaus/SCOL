@@ -2,8 +2,12 @@ import random
 import tifffile
 import numpy as np
 
+from typing import Union
 
-def generate_intensity(high:float|int=500, low:float|int=800):
+from io_utils import load_3d_mask_coords
+
+
+def generate_intensity(high:Union[float, int]=500, low:Union[float, int]=800):
     """
     Generate an int from a range.
 
@@ -15,7 +19,6 @@ def generate_intensity(high:float|int=500, low:float|int=800):
         int corresponding to intensity value.
     """
     return int(np.random.randint(high, low))
-
 
 
 
@@ -128,6 +131,14 @@ def generate_emitters_from_coord_list(coord_list, size_x, size_y, path, rng=None
     Returns:
         list[float]: A list containing the rescaled [x, y] coordinates.
     """
+    if rng is None:
+        rng = np.random.default_rng()
+        
+    if coord_list is None:
+        x_f = rng.uniform(0, size_x)
+        y_f = rng.uniform(0, size_y)
+        return [float(x_f), float(y_f)]
+    
     stack = tifffile.imread(path)  # (Z,H,W)
     original_y = stack.shape[0]
     original_x = stack.shape[1]
@@ -141,3 +152,81 @@ def generate_emitters_from_coord_list(coord_list, size_x, size_y, path, rng=None
     y_f = y + rng.uniform(0, 1)
 
     return [float(x_f / factor_x), float(y_f / factor_y)]
+
+
+
+
+def generate_molecules_data(frames, nbr_molecules:int, size_x:int=64, size_y:int=64, randomize:bool=True, 
+                          min_intensity:Union[float, int]=500, max_intensity:Union[float, int]=600, 
+                          off_length_min:int=1, off_length_max:int=3, number_blink_min:int=1, number_blink_max:int=3, 
+                          min_distance:int=5, mask_path:str=None, no_overlap:bool=True):
+    """
+    Generate a full dataset of emitters with spatial and temporal constraints.
+
+    Args:
+        frames (int): Total number of frames in the simulation.
+        nbr_molecules (int): Number of molecules to simulate.
+        size_x (int): Target simulation width. Defaults to 64.
+        size_y (int): Target simulation height. Defaults to 64.
+        randomize (bool): Whether to randomize blinking events. Defaults to True.
+        min_intensity (float): Minimum intensity value. Defaults to 500.
+        max_intensity (float): Maximum intensity value. Defaults to 600.
+        off_length_min (int): Minimum ON-time duration. Defaults to 1.
+        off_length_max (int): Maximum ON-time duration. Defaults to 3.
+        number_blink_min (int): Minimum number of blinks per molecule. Defaults to 1.
+        number_blink_max (int): Maximum number of blinks per molecule. Defaults to 3.
+        min_distance (int): Minimum Euclidean distance required between two emitters active in the same frame. Defaults to 5.
+        mask_path (str): Path to the reference mask TIFF file. 
+        no_overlap (bool): If True, enforces the min_distance constraint. 
+
+    Returns:
+        dict: A dictionary where keys are molecule IDs (int) and values individual molecules metadata.
+
+    Raises:
+        Exception: If a molecule cannot be placed after 1000 attempts due to overlap constraint.
+    """
+
+    data = dict()
+    min_dist_sq = min_distance ** 2
+    mask3d = load_3d_mask_coords(mask_path)
+    frame_dict = {f: [] for f in range(frames)}
+
+    for i in range(nbr_molecules):
+        on_times = generate_on_times(frames, randomize, off_length_min, off_length_max, number_blink_min, number_blink_max)
+        data[i] = {
+            'coordinates': None,
+            'intensity': generate_intensity(min_intensity, max_intensity),
+            'on_times': on_times,
+            'shift': 0,
+            'model': None
+        }
+
+    for mol_id, mol_data in data.items():
+        valid = False
+        tries = 0
+        on_frames = mol_data['on_times']
+
+        while not valid:
+            tries += 1
+            if tries > 1000:
+                raise Exception(f"Saturation : Impossible de placer la molécule {mol_id}")
+
+            candidate_coord = generate_emitters_from_coord_list(mask3d, size_x, size_y, mask_path)
+            valid = True
+            if no_overlap:
+                for frame in on_frames:
+                    coords = frame_dict[frame]
+                    if not coords:
+                        continue
+                    existing_arr = np.array(coords)
+                    diff = existing_arr - candidate_coord
+                    dist_sq = np.sum(diff**2, axis=1)
+                    if np.any(dist_sq < min_dist_sq):
+                        valid = False
+                        break
+            if valid:
+                mol_data['coordinates'] = candidate_coord
+                for frame in on_frames:
+                    frame_dict[frame].append(candidate_coord)
+
+    return data
