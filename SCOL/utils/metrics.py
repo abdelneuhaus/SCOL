@@ -7,21 +7,25 @@ from typing import Literal
 
 def get_last_file(path, name: str, sort_mode: Literal["time", "alpha"] = "alpha") -> str:
 	"""
-	Récupère le dernier fichier (le plus récent) qui contient le paramètre `name` dans son nom dans le chemin `path`.
+	Retrieves the last file in a directory that contains a specific substring in its name.
+    
+    Args:
+        path (Union[str, Path]): The directory path to search in.
+        name (str): The substring to look for within the filenames.
+        sort_mode (Literal["time", "alpha"], optional): The sorting method to apply.
 
-	:param path: Chemin du dossier où chercher les fichiers.
-	:param name: Chaîne à rechercher dans les noms de fichiers.
-	:param sort_mode: Mode de tri : "time" : date de modification (par défaut), "alpha" : ordre alphabétique.
-	:return: Chemin complet du dernier fichier trouvé (ou une chaîne vide si aucun fichier ne correspond).
-	"""
+    Returns:
+        str: The full path of the last matching file as a string.
+    """
+    
 	try:
 		folder = Path(path)
-		if not folder.is_dir(): return ""  # .									   Ce n'est pas un dossier
-		files = [p for p in folder.iterdir() if p.is_file() and name in p.name]  # Récupérer tous les fichiers contenant le nom
-		if not files: return ""  # .											   Aucun fichier trouvé
-		if sort_mode == "time": files.sort(key=lambda p: p.stat().st_mtime)  # .   Trier les fichiers par date de modification décroissante
-		else: files.sort(key=lambda p: p.name)  # .								   Trier les fichiers par ordre alphabétique.
-		return str(files[-1])  # .												   Retourner le dernier fichier de la liste (le plus récent)
+		if not folder.is_dir(): return "" 
+		files = [p for p in folder.iterdir() if p.is_file() and name in p.name]
+		if not files: return ""
+		if sort_mode == "time": files.sort(key=lambda p: p.stat().st_mtime)
+		else: files.sort(key=lambda p: p.name)
+		return str(files[-1])
 	except Exception as e:
 		print(f"Error while searching for the file: {e}")
 		return ""
@@ -29,6 +33,16 @@ def get_last_file(path, name: str, sort_mode: Literal["time", "alpha"] = "alpha"
 
 
 def read_coefficients_from_file(file_path: str):
+    """
+    Read and extract X and Y coefficents from a specific text file.
+
+    Args:
+        file_path (str): File path to coefficients file.
+
+    Returns:
+        tuple[np.ndarray, np.ndarray]: tuple with coeff_x and coeff_y.
+    """
+
     with open(file_path, "r") as f:
         lines = f.readlines()
     if len(lines) < 3:
@@ -39,8 +53,17 @@ def read_coefficients_from_file(file_path: str):
 
 
 
-
 def calculate_new_coordinates(x, y, cfx, cfy):
+    """
+    Reads and extracts X and Y coefficients from a text file.
+
+    Args:
+        file_path (str): The path to the text file containing the coefficients.
+
+    Returns:
+        tuple[np.ndarray, np.ndarray]: tuple with coeff_x and coeff_y.
+    """
+
     x2, y2 = x * x, y * y
     x3, y3 = x2 * x, y2 * y
 
@@ -59,6 +82,16 @@ def calculate_new_coordinates(x, y, cfx, cfy):
 
 
 def ground_truth_coordinates(df):
+    """
+    Parses and flattens ground truth coordinates from a raw DataFrame.
+
+    Args:
+        df (pd.DataFrame): The input DataFrame containing the raw data.
+
+    Returns:
+        pd.DataFrame: A formatted DataFrame with columns ["Plane", "X", "Y"].
+    """
+
     coords = []
     for i in range(len(df)):
         xy = df['approximative coordinates (x,y) '][i].replace('(', '').replace(')', '').split(',')
@@ -72,6 +105,16 @@ def ground_truth_coordinates(df):
 
 
 def create_coordinates_from_pt(df):
+    """
+    Cleans and standardizes a DataFrame containing coordinate data.
+
+    Args:
+        df (pd.DataFrame): The input DataFrame and must contain columns named 'Plane', 'X', and 'Y'.
+
+    Returns:
+        pd.DataFrame: A cleaned DataFrame containing only the rounded 'Plane', 'X', and 'Y' columns, with a reset index.
+    """
+
     df = df[['Plane', 'X', 'Y']].round(8)
     df.columns = ['Plane', 'X', 'Y']
     return df.reset_index(drop=True)
@@ -79,20 +122,29 @@ def create_coordinates_from_pt(df):
 
 
 def compare_coordinates_with_sigma(df_gt, df_pred, cfx=None, cfy=None, sigma=1.0, pixel_size=160):
+    """
+    Evaluates predicted molecule coordinates against ground truth using a distance threshold.
+
+    Args:
+        df_gt (pd.DataFrame): The ground truth DataFrame. Must contain 'Plane', 'X', and 'Y' columns.
+        df_pred (pd.DataFrame): The predicted DataFrame. Must contain 'Plane', 'X', and 'Y' columns.
+        cfx (Union[list, np.ndarray], optional): 10 coefficients for X-axis polynomial transformation. 
+        cfy (Union[list, np.ndarray], optional): 10 coefficients for Y-axis polynomial transformation. 
+        sigma (float, optional): The maximum allowable Euclidean distance (in pixels) for a prediction to be considered a valid match.
+        pixel_size (float, optional): The physical size of a pixel in nanometers, used to convert the final mean distance error.
+
+    Returns:
+        None: This function does not return a value. It prints the calculated metrics directly to the standard output.
+    """
+
     tp = 0
     distances = []
     
-    # ---------------------------------------------------------
-    # NOUVEAU : Application de la transformation si les coeffs sont là
-    # ---------------------------------------------------------
     if cfx is not None and cfy is not None:
-        # On travaille sur une copie pour ne pas modifier le DataFrame original en dehors de la fonction
         df_pred = df_pred.copy()
         new_x, new_y = calculate_new_coordinates(df_pred["X"].values, df_pred["Y"].values, cfx, cfy)
         df_pred["X"] = new_x
         df_pred["Y"] = new_y
-    # ---------------------------------------------------------
-
     planes = sorted(set(df_gt["Plane"]).intersection(set(df_pred["Plane"])))
 
     for p in planes:
@@ -102,23 +154,17 @@ def compare_coordinates_with_sigma(df_gt, df_pred, cfx=None, cfy=None, sigma=1.0
         if len(gt) == 0 or len(pred) == 0:
             continue
 
-        # Distances euclidiennes vectorisées
         dists = np.sqrt(((gt[:, np.newaxis, :] - pred[np.newaxis, :, :]) ** 2).sum(axis=2))
-
-        # Collecte des matches sous le seuil sigma
         matches = []
         for i in range(dists.shape[0]):
             for j in range(dists.shape[1]):
                 if dists[i, j] <= sigma:
                     matches.append((i, j, dists[i, j]))
 
-        # Tri par distance croissante (approche gloutonne)
         matches.sort(key=lambda x: x[2])
-
         used_gt = set()
         used_pred = set()
 
-        # Matching 1–1
         for i, j, dist in matches:
             if i not in used_gt and j not in used_pred:
                 used_gt.add(i)
@@ -129,7 +175,6 @@ def compare_coordinates_with_sigma(df_gt, df_pred, cfx=None, cfy=None, sigma=1.0
     fp = len(df_pred) - tp
     fn = len(df_gt) - tp
 
-    # Métriques
     print("TP (%):", tp / (tp + fn) * 100 if (tp + fn) else 0)
     print("FP (%):", fp / (tp + fp) * 100 if (tp + fp) else 0)
     print("FN (%):", fn / (tp + fn) * 100 if (tp + fn) else 0)
@@ -150,15 +195,16 @@ def compare_coordinates_with_sigma(df_gt, df_pred, cfx=None, cfy=None, sigma=1.0
 
 
 
-
+#### MAIN ####
 # # Loading the data
-DATA1 = get_last_file("C:/Git/SCOL/data/GROUND_TRUTH/SIMULATION/metrics_simu/fixed/target_PALM_Tracer", "localizations")
-DATA2 = get_last_file("C:/Git/SCOL/data/GROUND_TRUTH/SIMULATION/metrics_simu/fixed/noisy_weighted5_PALM_Tracer", "localizations")
+DATA1 = get_last_file("C:/Git/SCOL/data/SIMULATION/Prediction/target_PALM_Tracer", "localizations")
+DATA2 = get_last_file("C:/Git/SCOL/data/SIMULATION/Prediction/noisy_CARE_PALM_Tracer", "localizations")
 GT = pd.read_csv(DATA1, sep=',', engine='python')
 OUTPUT = pd.read_csv(DATA2, sep=',', engine='python')
 
-COEFF_PATH  = "C:/Git/SCOL/data/GROUND_TRUTH/SPT/DUALVIEW.PT/DUALVIEW_2CFit.txt"
-coeff_x, coeff_y = read_coefficients_from_file(COEFF_PATH)
+# Coefficients
+# COEFF_PATH  = "C:/Git/SCOL/data/GROUND_TRUTH/SPT/DUALVIEW.PT/DUALVIEW_2CFit.txt"
+# coeff_x, coeff_y = read_coefficients_from_file(COEFF_PATH)
     
 # Extracting coordinates
 output = create_coordinates_from_pt(OUTPUT)
