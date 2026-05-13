@@ -1,10 +1,1 @@
-aydin==0.1.15
-scikit-image==0.18.3
-imageio==2.21.1
-numpy==1.26.4
-dask[dataframe]
-# aydin==0.1.15
-# scikit-image>=0.19.3
-# imageio==2.21.1
-# numpy==1.26.4
-# dask[dataframe]
+git+https://github.com/royerlab/aydin.git
