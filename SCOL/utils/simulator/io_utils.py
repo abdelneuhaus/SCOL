@@ -88,7 +88,6 @@ def load_molecule_data():
         load_data = fd.askopenfilename(title='Open a file', initialdir='.', filetypes=filetypes)
         with open(load_data, 'r') as f:
             data_loaded = json.load(f)
-            
         data_loaded = {int(k): v for k, v in data_loaded.items()}
         for mol_id, mol_data in data_loaded.items():
             if 'trajectory' in mol_data and "0" in mol_data['trajectory']:
@@ -96,11 +95,6 @@ def load_molecule_data():
             else:
                 mol_data['trajectory'] = {"0": mol_data.get('coordinates', [0,0])}
                 mol_data['coordinates'] = mol_data['trajectory']["0"]
-
-        if '_diffusion' in load_data:
-            for i in range(len(data_loaded)):
-                data_loaded[i]['on_times'] = [data_loaded[i]['frame']]
-                data_loaded[i]['shift'] = 0
     
         print(f"Fichier {load_data} chargé avec succès.")
         return data_loaded
