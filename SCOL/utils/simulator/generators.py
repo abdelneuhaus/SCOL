@@ -1,4 +1,3 @@
-import random
 import tifffile
 import numpy as np
 
@@ -23,7 +22,7 @@ def generate_intensity(high:Union[float, int]=500, low:Union[float, int]=800):
 
 
 
-def generate_on_times(frames, randomize=True, off_length_min=1, off_length_max=3, number_blink_min=1, number_blink_max=3):
+def generate_on_times(frames, randomize=True, on_length_min=2, on_length_max=5, number_blink_min=1, number_blink_max=5):
     """
     Generate a list of frame indices where an emitter is active (ON state).
 
@@ -44,10 +43,10 @@ def generate_on_times(frames, randomize=True, off_length_min=1, off_length_max=3
         return list(range(max(0, frames - 10), frames + 1))
     
     blink_set = set()
-    number_blink = random.randint(number_blink_min, number_blink_max)
+    number_blink = np.random.randint(number_blink_min, number_blink_max)
     for _ in range(number_blink):
-        length = random.randint(off_length_min, off_length_max)
-        start = random.randint(0, max(0, frames - length))
+        length = np.random.randint(on_length_min, on_length_max)
+        start = np.random.randint(0, max(0, frames - length)) 
         blink_set.update(range(start, start + length))
     return sorted(blink_set)
 
