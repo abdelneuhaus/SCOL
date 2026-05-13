@@ -106,7 +106,7 @@ def SMLM_simulation(frames:np.ndarray, nb_emitters:int, filename:str, randomize:
 
 
 # MAIN
-FRAMES = 1000
+FRAMES = 500
 N_EMITTERS = 100
 FILENAME = "low.tif"
 RANDOMIZE = True
@@ -123,8 +123,8 @@ IS_LOADED = False
 MASK_PATH = None
 NO_OVERLAP = False
 MIN_DISTANCE = 5
-DIFF_COEFF=[0.0, 0.02, 0.06]
-PROPORTIONS=[0.4, 0.3, 0.3]
+DIFF_COEFF=[0.02, 0.0]
+PROPORTIONS=[0.5, 0.5]
 FRAME_TIME=0.02
 PIXEL_SIZE=0.16
 
