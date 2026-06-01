@@ -156,7 +156,6 @@ def main(image_path:str, coeff_path:str, output_path:str):
     print("Data Loading...")
     image_stack = tiff.imread(image_path)
     coeff_x, coeff_y = read_coefficients_from_file(coeff_path)
-
     print(f"{image_stack.shape[0]} images to shift…")
 
     # JIT compilation
