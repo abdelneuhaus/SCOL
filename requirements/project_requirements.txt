@@ -22,3 +22,5 @@ customtkinter
 matplotlib
 tifffile
 numba
+ipywidgets
+ipyfilechooser

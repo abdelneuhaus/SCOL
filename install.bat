@@ -18,6 +18,7 @@ call venv_aydin\Scripts\activate.bat
 python -m pip install --upgrade pip setuptools wheel
 pip install -r .\requirements\aydin_requirements.txt
 pip install tensorflow==2.10.0
+python -c "import aydin.util.log.log as lg; path = lg.__file__.replace('.pyc', '.py'); txt = open(path, 'r', encoding='utf-8').read(); open(path, 'w', encoding='utf-8').write(txt.replace('c_scafold', 'c_scaffold'))"
 call venv_aydin\Scripts\deactivate.bat
 
 echo.
