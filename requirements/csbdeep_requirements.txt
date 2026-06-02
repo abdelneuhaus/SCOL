@@ -2,3 +2,5 @@ csbdeep==0.8.1
 tensorflow-macos==2.10.0 
 tensorflow-metal==0.6.0
 numpy==1.23.5
+ipywidgets
+ipyfilechooser
