@@ -1,6 +1,9 @@
+import time
+
 import numpy as np
 import tifffile as tiff
-import time
+
+from typing import Union
 from numba import njit, prange
 
 
@@ -25,7 +28,7 @@ def read_coefficients_from_file(file_path: str):
 
 
 @njit(fastmath=True)
-def calculate_new_coordinates(x:float|int, y:float|int, cfx:np.ndarray, cfy:np.ndarray):
+def calculate_new_coordinates(x:Union[float, int], y:Union[float, int], cfx:np.ndarray, cfy:np.ndarray):
     """
     Compute third order polynomial for x and y coordinates using coefficients. Can be done on int or float.
 
@@ -33,8 +36,8 @@ def calculate_new_coordinates(x:float|int, y:float|int, cfx:np.ndarray, cfy:np.n
         This function is decorated with @njit (Numba). First function call will be slower due to JIT compilation.
 
     Args:
-        x (float | int): x coordinate value.
-        y (float | int): y coordinate value.
+        x Union[float, int]: x coordinate value.
+        y Union[float, int]: y coordinate value.
         cfx (np.array): x coefficient file.
         cfy (np.array): y coefficient file.
 
@@ -142,7 +145,7 @@ def process_stack(image_stack:np.ndarray, cfx:np.ndarray, cfy:np.ndarray):
 
 
 
-def main(image_path:str, coeff_path:str, output_path:str):
+def subpixel_transformation(image_path:str, coeff_path:str, output_path:str):
     """
     Main function.
     
@@ -173,8 +176,8 @@ def main(image_path:str, coeff_path:str, output_path:str):
 
 
 
-if __name__ == "__main__":
-    image_path  = "//filer3/TEAM_M/everyone/_Transferts/Transfert Neuhaus/2D_NUP_DATASET/5mW/LOW/U2OS-NUP96_R4-100pM_015_low.tif"
-    coeff_path  = "data/NUP/SplitViewBeads.PT/SplitViewBeads_2CFit.txt"
-    output_path = "//filer3/TEAM_M/everyone/_Transferts/Transfert Neuhaus/2D_NUP_DATASET/5mW/LOW_SHIFTED/U2OS-NUP96_R4-100pM_015_low_shifted.tif"
-    main(image_path, coeff_path, output_path)
+# if __name__ == "__main__":
+#     image_path  = "//filer3/TEAM_M/everyone/_Transferts/Transfert Neuhaus/2D_NUP_DATASET/5mW/LOW/U2OS-NUP96_R4-100pM_015_low.tif"
+#     coeff_path  = "data/NUP/SplitViewBeads.PT/SplitViewBeads_2CFit.txt"
+#     output_path = "//filer3/TEAM_M/everyone/_Transferts/Transfert Neuhaus/2D_NUP_DATASET/5mW/LOW_SHIFTED/U2OS-NUP96_R4-100pM_015_low_shifted.tif"
+#     subpixel_transformation(image_path, coeff_path, output_path)
