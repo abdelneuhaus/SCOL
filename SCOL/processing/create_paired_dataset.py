@@ -1,18 +1,29 @@
+"""
+Adapted from https://github.com/tmonseigne/palm-tracer
+Extraction of localization pipeline and adapted to standalone use.
+"""
+
+import random
 import ctypes
 import tifffile
+
 import numpy as np
-from typing import Sequence, Tuple, List, Optional
-import random
 import time as time
+import pandas as pd
+import processing.Parsing as Parsing
+
+from typing import Sequence, Tuple, Optional
+from processing.utils import load_dll, as_c_contig, max_allocation_bytes
 
 
-def _detect_points_PALM(frame: np.ndarray,
-                        dll,
-                        buff_ptr,
-                        potential_points: int,
-                        H: int, W: int,
-                        threshold: float,
-                        size_ROI_fit: int) -> List[Tuple[float, float]]:
+DENSITY = 0.1
+C_IMG, C_TAB_DBL, C_TAB_UINT = ctypes.POINTER(ctypes.c_uint16), ctypes.POINTER(ctypes.c_double), ctypes.POINTER(ctypes.c_uint64)
+C_UINT, C_BOOL, C_DBL = ctypes.c_uint64, ctypes.c_bool, ctypes.c_double
+
+
+
+def detect_points_PALM(stack: np.ndarray, threshold: float, watershed: bool, fit: int, fit_params: np.ndarray,
+					 planes: Optional[list[int]] = None) -> pd.DataFrame:
     """
     Call function to perform advanced Gaussian fitting, part of PALMTracer.
 
@@ -29,40 +40,57 @@ def _detect_points_PALM(frame: np.ndarray,
     Returns:
         locs (List[Tuple[float, float]]): list of localized molecules XY coordinates
     """
+    dll_type = "CPU"
+    dll = load_dll(dll_type)
+    
+    if dll is None:
+        raise RuntimeError("Failed to load PALMTracer DLL. Check path and permissions.")
 
-    c_ushort_p = ctypes.POINTER(ctypes.c_ushort)
-    img_ptr = frame.ctypes.data_as(c_ushort_p) 
+    stk = as_c_contig(stack, np.dtype(np.uint16), writeable=False)
+    params = as_c_contig(fit_params, np.dtype(np.float64), writeable=False)
+    height, width = stk.shape[-2:]
+	
+    n_planes = 1 if stk.ndim == 2 else stk.shape[0]
+    if planes is None: planes = list(range(n_planes))
+    else: planes = [p for p in planes if 0 <= p < n_planes]
+    n_planes = len(planes)
+    stk = stk[np.newaxis, :, :] if stk.ndim == 2 else stk[planes[0]:planes[0] + n_planes]
 
-    waveletNo = ctypes.c_uint(1)
-    thresholdVal = ctypes.c_double(threshold)
-    watershedRatio = ctypes.c_double(0)
-    volMin = ctypes.c_double(4)
-    intMin = ctypes.c_double(0)
-    gaussFit = ctypes.c_ushort(2)
-    sigma0 = ctypes.c_double(1)
-    theta0 = ctypes.c_double(0)
-    size_ROI_fit_c = ctypes.c_ushort(size_ROI_fit)
+    max_points = int(max_allocation_bytes() // 8)  # .				Nombre de points maximum allouable en une fois
+    plane_points = int(height * width * DENSITY) * Parsing.N_COL_LOC  # Taille théorique max pour un seul plan (N points max * N Col localisation)
+    if max_points < plane_points: return pd.DataFrame()  # . 			pragma: no cover — Cas extrême un seul plan est gargantuesque.
+    n_plane_max = int(min(max_points // plane_points, n_planes))  # .	Nombre de plans qui tiennent dans max_allocation
 
-    dll._OpenPALMProcessing(img_ptr, buff_ptr, potential_points, H, W,
-                            waveletNo, thresholdVal, watershedRatio,
-                            volMin, intMin,
-                            gaussFit, sigma0, sigma0, theta0,
-                            size_ROI_fit_c)
-    _ = dll._PALMProcessing()
-    dll._closePALMProcessing()
+    dfs: list[pd.DataFrame] = []
+    i = 0
+    while i < len(planes):
+        k = min(n_plane_max, n_planes - i)  # .						Taille réelle du bloc, soit le max, soit "ce qui reste".
+        stk_block = stk[i:i + k]  # .								Indices relatifs (0..n_planes-1)
+        n_block = plane_points * k  # . 							Nombre de points pour ce bloc
+        locs = np.empty((n_block,), dtype=np.float64, order="C")  # Création de la sortie
 
-    pts = np.ctypeslib.as_array(buff_ptr, shape=(potential_points,))
+        count = dll.Localization(stk_block.ctypes.data_as(C_IMG), locs.ctypes.data_as(C_TAB_DBL), C_UINT(n_block), C_UINT(height), C_UINT(width),
+                                    C_UINT(k), C_DBL(threshold), C_DBL(0 if watershed else 10), C_UINT(fit), params.ctypes.data_as(C_TAB_DBL))
 
-    locs = []
-    for k in range(0, len(pts), 13):
-        cx = pts[k + 4]
-        cy = pts[k + 3]         # PALM order: [..., y, x, ...]
-        locs.append((cx, cy))
-        # breaking condition
-        if (cx, cy) in [(0.0, 0.0), (-1.0, -1.0)]:
-            break
+        res = Parsing.parse_result(locs[:count], "Localization")
+        if "Plane" in res.columns: res["Plane"] += planes[0] + i  # . En cas de filtre des plans, on incrémente par i + premier plan.
+        dfs.append(res)
+        i += k
 
-    return locs
+    res = pd.concat(dfs, ignore_index=True) if dfs else pd.DataFrame()
+
+    if not res.empty:
+        res.reset_index(drop=True, inplace=True)
+        res["Id"] = res.index + 1  # .					  1-based comme attendu
+        if fit == 4:  # Fit Gaussien avec Theta
+            mask = res["Integrated Intensity"] > 0
+            res.loc[mask, "Theta"] = Parsing.manage_theta(res.loc[mask, "Theta"])  # Clean Theta and show stats
+
+    if res.empty:
+        return []
+        
+    return list(zip(res['X'], res['Y']))
+
 
 
 
@@ -78,7 +106,6 @@ def build_paired_roi_stacks_batch(
     size_ROI_fit: int = 7,
     size_ROI_crop: int = 8,
     border_margin: int = 5,
-    dll_path: str = "./SCOL/CPU_PALM.dll",
     seed: Optional[int] = None,
     output_prefix: str = "batch",
     ratio_loc: float = 0.5) -> Tuple[np.ndarray, np.ndarray]:
@@ -117,10 +144,6 @@ def build_paired_roi_stacks_batch(
     if seed is not None:
         random.seed(seed)
 
-    dll = ctypes.cdll.LoadLibrary(dll_path)
-    potential_points = 49999
-    empty_buff = np.zeros((potential_points,), dtype=np.float64)
-    buff_ptr = empty_buff.ctypes.data_as(ctypes.POINTER(ctypes.c_double))
     rois_high, rois_low = [], []
     n_patches_per_stack = n_patches // len(paths_high) if n_patches is not None else None
 
@@ -151,19 +174,19 @@ def build_paired_roi_stacks_batch(
         all_loc_candidates = []
 
         # localization process
-        print(f"Stack {i+1}/{len(paths_high)}: Recherche globale des molécules...")
+        sigma, theta = 1.0, 0.0
+        fit_param = np.array([size_ROI_fit, sigma, 2 * sigma, theta], dtype=np.float64)
+        print(f"Stack {i+1}/{len(paths_high)}: Searching for molecules...")
         for f in range(margin_t_low, n_frames - margin_t_low):
             frameA_center = stack_A[f] 
-            locs = _detect_points_PALM(frameA_center, dll, buff_ptr,
-                                       potential_points, H, W,
-                                       threshold, size_ROI_fit)
+            locs = detect_points_PALM(frameA_center, threshold, True, 2, fit_param, list(range(0,10)))
             for cx, cy in locs:
                 if (min_center_x <= cx <= max_center_x and min_center_y <= cy <= max_center_y):
                     if mask[int(cy), int(cx)] > 0:
                         all_loc_candidates.append((f, cx, cy))
 
         total_locs_found = len(all_loc_candidates)
-        print(f"Total des molécules potentielles détectées : {total_locs_found}")
+        print(f"Number of potential molecules detected to crop around : {total_locs_found}")
 
         # % calculation
         if n_patches_per_stack is not None:
@@ -174,12 +197,12 @@ def build_paired_roi_stacks_batch(
             target_bg = int(target_loc * (1 - ratio_loc) / max(ratio_loc, 1e-6)) if ratio_loc < 1 else 0
 
         if target_loc > total_locs_found:
-            print(f"Attention: {target_loc} patchs molécules demandés, mais seulement {total_locs_found} trouvés.")
+            print(f"Warning: {target_loc} patches requested, but only {total_locs_found} found. Change ratio.")
             target_loc = total_locs_found
             if ratio_loc > 0:
                 target_bg = int(target_loc * (1 - ratio_loc) / ratio_loc)
 
-        print(f"Objectif d'extraction : {target_loc} patchs Molécules, {target_bg} patchs Fond.")
+        print(f"OTarget : {target_loc} patchs with molecules, {target_bg} patchs with backround.")
 
         # random selection
         rng.shuffle(all_loc_candidates)
@@ -226,7 +249,7 @@ def build_paired_roi_stacks_batch(
             rois_low.append(rB)
 
     if not rois_high:
-        raise RuntimeError("Aucune ROI valide trouvée.")
+        raise RuntimeError("No valid ROI found.")
 
     stack_high = np.stack(rois_high) 
     stack_low  = np.stack(rois_low)  
@@ -240,29 +263,5 @@ def build_paired_roi_stacks_batch(
     tifffile.imwrite(outA, stack_high.astype(np.float32), imagej=True)
     tifffile.imwrite(outB, stack_low.astype(np.float32), imagej=True)
 
-    print(f"{stack_high.shape[0]} ROIs enregistrées dans {outA} et {outB}")
+    print(f"{stack_high.shape[0]} ROIs saved in {outA} and {outB}")
     return stack_high, stack_low
-
-
-
-paths_high = [r"C:/Git/SCOL/data/GROUND_TRUTH/SIMULATION/metrics_simu/fixed/high.tif"]
-paths_low = [r"C:/Git/SCOL/data/GROUND_TRUTH/SIMULATION/metrics_simu/fixed/low.tif"]
-paths_mask = None #[r"nup_seuil26_cell.tif"]
-
-t0 = time.time()
-build_paired_roi_stacks_batch(
-    paths_high, 
-    paths_low,
-    paths_mask,
-    n_patches=5000,
-    t_window_high=3,
-    t_window_low=3,
-    threshold=24,
-    size_ROI_fit=8,
-    size_ROI_crop=64,
-    border_margin=5,
-    seed=41,
-    output_prefix="75",
-    ratio_loc=0.9
-)
-print(f"Finished in {time.time() - t0:.2f} second(s).")
