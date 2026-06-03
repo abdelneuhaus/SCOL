@@ -1,1 +1,3 @@
 git+https://github.com/royerlab/aydin.git
+ipywidgets
+ipyfilechooser
