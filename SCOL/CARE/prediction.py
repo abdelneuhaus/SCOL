@@ -8,7 +8,7 @@ from csbdeep.io import save_tiff_imagej_compatible
 
 
 
-def do_denoising_3D_fast(input_path:str, output_path:str, model_name:str, basedir:str='C:/Git/SCOL/models/data/SIMU/TEST/models'):
+def do_denoising_3D(input_path:str, output_path:str, model_name:str, basedir:str='C:/Git/SCOL/models/data/SIMU/TEST/models'):
     """
     Perfom restoration of noisy image.
 
@@ -65,10 +65,10 @@ def do_denoising_3D_fast(input_path:str, output_path:str, model_name:str, basedi
     
 
 
-start= time.time()
-model_path = "C:/Git/SCOL/models/data/SIMU/TEST/models"
-do_denoising_3D_fast(input_path="data/GROUND_TRUTH/SIMULATION/metrics_simu/fixed/noisy.tif", 
-                     output_path="data/GROUND_TRUTH/SIMULATION/metrics_simu/fixed/noisy_weighted5.tif", 
-                     model_name="k3_d1_f64")
-end = time.time()
-print((end-start)/60, "minutes")
+# start= time.time()
+# model_path = "C:/Git/SCOL/models/data/SIMU/TEST/models"
+# do_denoising_3D(input_path="data/GROUND_TRUTH/SIMULATION/metrics_simu/fixed/noisy.tif", 
+#                      output_path="data/GROUND_TRUTH/SIMULATION/metrics_simu/fixed/noisy_weighted5.tif", 
+#                      model_name="k3_d1_f64")
+# end = time.time()
+# print((end-start)/60, "minutes")
