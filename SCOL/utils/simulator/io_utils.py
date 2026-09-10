@@ -47,28 +47,40 @@ def save_parameters(filename:str, frames:int, nb_emitters:int, intensity:Union[f
 
 
 
-def save_data(points, filename:str):
+def save_data(points: dict, filename: str):
     """
     Save simulation data and emitter properties to a JSON file.
 
     Args:
-        points (list[dict]): A list of dictionaries, where each dictionary contains 
-            the properties of an emitter (coordinates, intensity, on_times, shift).
+        points (dict): A dictionary where each key contains the properties of 
+            an emitter (trajectory, intensity, on_times, shift, D).
         filename (str): The name or path of the file (extension .tif is handled).
 
     Returns:
         None: This function writes a JSON file and does not return a value.
     """
-    filename = filename.replace('.tif','')
+    filename = filename.replace('.tif', '')
     dictionary = dict()
+    
     for mol_id, mol_data in points.items():        
-        dictionary[mol_id] = {
-            'trajectory': mol_data.get('trajectory', {}), 
+        D = mol_data.get('D', 0.0)
+        traj = mol_data.get('trajectory', {})
+        mol_info = {
             'intensity': int(mol_data['intensity']),
             'on_times': np.array(mol_data['on_times'], dtype='uint16').tolist(),
             'shift': mol_data.get('shift', 0),
-            'D': mol_data.get('D', 0.0)
+            'D': D
         }
+        
+        if D == 0.0 and traj:
+            first_key = list(traj.keys())[0]
+            mol_info['position'] = traj[first_key]
+        else:
+            mol_info['trajectory'] = traj
+            mol_info['visible_frames'] = [int(frame) for frame in traj.keys()]
+            
+        dictionary[mol_id] = mol_info
+        
     json_object = json.dumps(dictionary, indent=4)
     with open(filename + ".json", "w") as outfile:
         outfile.write(json_object)
@@ -92,13 +104,15 @@ def load_molecule_data():
         for mol_id, mol_data in data_loaded.items():
             if 'trajectory' in mol_data and "0" in mol_data['trajectory']:
                 mol_data['coordinates'] = mol_data['trajectory']["0"]
+            elif 'position' in mol_data:
+                mol_data['coordinates'] = mol_data['position']
+                mol_data['trajectory'] = {"0": mol_data['position']}
             else:
                 mol_data['trajectory'] = {"0": mol_data.get('coordinates', [0,0])}
                 mol_data['coordinates'] = mol_data['trajectory']["0"]
     
-        print(f"Fichier {load_data} chargé avec succès.")
+        print(f"File {load_data} loaded.")
         return data_loaded
-        
     except Exception as e:
         print(f"No JSON loaded. Error: {e}")
         return None

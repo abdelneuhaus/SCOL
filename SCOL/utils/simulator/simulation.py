@@ -75,7 +75,7 @@ def SMLM_simulation(frames:np.ndarray, nb_emitters:int, filename:str, randomize:
             for m_id, mol in points.items():
                 if str(i) in mol['trajectory']: 
                     mol['coordinates'] = mol['trajectory'][str(i)]
-
+                
         img, points = generate_one_frame(points, x_image, y_image, frame=i, sigma=1.0, trunc=6)        
         for m_id in active_in_frame[i]:
             mol = points[m_id]
@@ -106,25 +106,25 @@ def SMLM_simulation(frames:np.ndarray, nb_emitters:int, filename:str, randomize:
 
 
 # MAIN
-FRAMES = 1000
-N_EMITTERS = 50
-FILENAME = "high.tif"
+FRAMES = 20
+N_EMITTERS = 400
+FILENAME = "low.tif"
 RANDOMIZE = True
-MIN_INTENSITY, MAX_INTENSITY = 1000, 1100
-RATIO = 0.05 # corresponding to 5% SNR, ratio of 1.0 means same SNR
-X_IMAGE, Y_IMAGE = 64, 64
-LENGTH_MIN = 4
-LENGTH_MAX = 40
-BLINK_MIN = 2
-BLINK_MAX = 5
+MIN_INTENSITY, MAX_INTENSITY = 700, 800
+RATIO = 0.1 # corresponding to 5% SNR, ratio of 1.0 means same SNR
+X_IMAGE, Y_IMAGE = 256, 256
+LENGTH_MIN = 1
+LENGTH_MAX = 2
+BLINK_MIN = 1
+BLINK_MAX = 2
 BACKGROUND_VALUE = 100
-SD_BCKG_VALUE = 25
-IS_LOADED = False
+SD_BCKG_VALUE = 20
+IS_LOADED = True
 MASK_PATH = None
 NO_OVERLAP = False
 MIN_DISTANCE = 5
-DIFF_COEFF=[0.05, 0.02, 0.0]
-PROPORTIONS=[0.34, 0.33, 0.33]
+DIFF_COEFF=[0.0]
+PROPORTIONS=[1]
 FRAME_TIME=0.02
 PIXEL_SIZE=0.16
 
