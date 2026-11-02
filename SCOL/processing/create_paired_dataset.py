@@ -1,295 +1,347 @@
 """
-Adapted from https://github.com/tmonseigne/palm-tracer
-Extraction of localization pipeline and adapted to standalone use.
+Creation of paired (HIGH, LOW) patches to train CARE.
+Detection part adapted from https://github.com/tmonseigne/palm-tracer
 """
 
-import random
+import sys
 import ctypes
-import tifffile
+from functools import lru_cache
+from pathlib import Path
 
 import numpy as np
-import time as time
 import pandas as pd
-import processing.Parsing as Parsing
+import tifffile
 
-from typing import Sequence, Tuple, Optional
+# Makes "processing" importable when this file is run directly
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+import processing.Parsing as Parsing
 from processing.utils import load_dll, as_c_contig, max_allocation_bytes
 
 
-DENSITY = 0.1
-C_IMG, C_TAB_DBL, C_TAB_UINT = ctypes.POINTER(ctypes.c_uint16), ctypes.POINTER(ctypes.c_double), ctypes.POINTER(ctypes.c_uint64)
-C_UINT, C_BOOL, C_DBL = ctypes.c_uint64, ctypes.c_bool, ctypes.c_double
+DENSITY = 0.1  # max. expected localizations per pixel (sets the output buffer size)
+C_IMG, C_TAB_DBL = ctypes.POINTER(ctypes.c_uint16), ctypes.POINTER(ctypes.c_double)
+C_UINT, C_DBL = ctypes.c_uint64, ctypes.c_double
 
 
-
-def detect_points_PALM(stack: np.ndarray, threshold: float, watershed: bool, fit: int, fit_params: np.ndarray,
-					 planes: Optional[list[int]] = None) -> pd.DataFrame:
+@lru_cache(maxsize=None)    # no need to reload the DLL at each call
+def _get_dll() -> ctypes.CDLL:
     """
-    Call function to perform advanced Gaussian fitting, part of PALMTracer.
+    Load the PALMTracer library (.dll on Windows, .dylib on macOS).
 
-    Args:
-        frame (np.ndarray): SMLM image on which to perform Gaussian fitting
-        dll (ctypes.CDLL): instance of the DLL loaded
-        buff_ptr (ctypes.POINTER(ctypes.c_double)): pointer to output array (must be float64 or double)
-        potential_points (int): maximal buffer size (number max of localization per plane)
-        H (int): height of the image
-        W (int): width of the image
-        threhsold (float): threshold value to select molecules
-        size_ROI_fit (int): size of the ROI to select molecules
-    
+    Thanks to ``lru_cache``, the library is loaded at the first call only; the next calls
+    return the same object.
+
     Returns:
-        locs (List[Tuple[float, float]]): list of localized molecules XY coordinates
+        ctypes.CDLL: the loaded library.
+
+    Raises:
+        RuntimeError: if the library cannot be loaded.
     """
-    dll_type = "CPU"
-    dll = load_dll(dll_type)
-    
+    dll = load_dll("CPU")   # .dll on Windows, .dylib on macOS
     if dll is None:
         raise RuntimeError("Failed to load PALMTracer DLL. Check path and permissions.")
-
-    stk = as_c_contig(stack, np.dtype(np.uint16), writeable=False)
-    params = as_c_contig(fit_params, np.dtype(np.float64), writeable=False)
-    height, width = stk.shape[-2:]
-	
-    n_planes = 1 if stk.ndim == 2 else stk.shape[0]
-    if planes is None: planes = list(range(n_planes))
-    else: planes = [p for p in planes if 0 <= p < n_planes]
-    n_planes = len(planes)
-    stk = stk[np.newaxis, :, :] if stk.ndim == 2 else stk[planes[0]:planes[0] + n_planes]
-
-    max_points = int(max_allocation_bytes() // 8)  # .				Nombre de points maximum allouable en une fois
-    plane_points = int(height * width * DENSITY) * Parsing.N_COL_LOC  # Taille théorique max pour un seul plan (N points max * N Col localisation)
-    if max_points < plane_points: return pd.DataFrame()  # . 			pragma: no cover — Cas extrême un seul plan est gargantuesque.
-    n_plane_max = int(min(max_points // plane_points, n_planes))  # .	Nombre de plans qui tiennent dans max_allocation
-
-    dfs: list[pd.DataFrame] = []
-    i = 0
-    while i < len(planes):
-        k = min(n_plane_max, n_planes - i)  # .						Taille réelle du bloc, soit le max, soit "ce qui reste".
-        stk_block = stk[i:i + k]  # .								Indices relatifs (0..n_planes-1)
-        n_block = plane_points * k  # . 							Nombre de points pour ce bloc
-        locs = np.empty((n_block,), dtype=np.float64, order="C")  # Création de la sortie
-
-        count = dll.Localization(stk_block.ctypes.data_as(C_IMG), locs.ctypes.data_as(C_TAB_DBL), C_UINT(n_block), C_UINT(height), C_UINT(width),
-                                    C_UINT(k), C_DBL(threshold), C_DBL(0 if watershed else 10), C_UINT(fit), params.ctypes.data_as(C_TAB_DBL))
-
-        res = Parsing.parse_result(locs[:count], "Localization")
-        if "Plane" in res.columns: res["Plane"] += planes[0] + i  # . En cas de filtre des plans, on incrémente par i + premier plan.
-        dfs.append(res)
-        i += k
-
-    res = pd.concat(dfs, ignore_index=True) if dfs else pd.DataFrame()
-
-    if not res.empty:
-        res.reset_index(drop=True, inplace=True)
-        res["Id"] = res.index + 1  # .					  1-based comme attendu
-        if fit == 4:  # Fit Gaussien avec Theta
-            mask = res["Integrated Intensity"] > 0
-            res.loc[mask, "Theta"] = Parsing.manage_theta(res.loc[mask, "Theta"])  # Clean Theta and show stats
-
-    if res.empty:
-        return []
-        
-    return list(zip(res['X'], res['Y']))
+    return dll
 
 
-
-
-def build_paired_roi_stacks_batch(
-    paths_high: Sequence[str],
-    paths_low: Sequence[str],
-    paths_mask: Optional[Sequence[str]] = None, 
-    *,
-    n_patches: Optional[int] = None,
-    t_window_high: int = 1,
-    t_window_low: int = 3,
-    threshold: float = 180.0,
-    size_ROI_fit: int = 7,
-    size_ROI_crop: int = 8,
-    border_margin: int = 5,
-    seed: Optional[int] = None,
-    output_prefix: str = "batch",
-    ratio_loc: float = 0.5) -> Tuple[np.ndarray, np.ndarray]:
+def detect_points_PALM(stack: np.ndarray, threshold: float, watershed: bool, fit: int,
+                       fit_params: np.ndarray) -> pd.DataFrame:
     """
-    Extract paired ROIs from high and low SNR stacks.
+    Detect and fit molecules with PALMTracer on a (T, Y, X) stack or a (Y, X) image.
+
+    The whole stack is sent to the PALMTracer library in one call, split into blocks
+    of frames only if it does not fit in memory.
 
     Args:
-        paths_high (Sequence[str]): List of file paths to the high SNR (target) TIFF stacks.
-        paths_low (Sequence[str]): List of file paths to the low SNR (input) TIFF stacks.
-        paths_mask (Optional[Sequence[str]]): List of paths to binary mask TIFFs.
-        t_window (int): Temporal window size for the low SNR stacks. Must be an odd integer.
-        threshold (float): Intensity threshold for the PALM point detection algorithm. Defaults to 180.0.
-        size_ROI_fit (int): Diameter of the neighborhood (in pixels) used by the DLL for sub-pixel localization/fitting
-        size_ROI_crop (int): The spatial dimensions (width and height) of the final extracted ROI patches.
-        border_margin (int): Safety margin in pixels from the image edges to avoid out-of-bounds cropping
-        dll_path (str): File path to the compiled C++ DLL (CPU_PALM) used for point detection.
-        seed (Optional[int]): Random seed for reproducibility of the ROI jittering and background sampling
-        output_prefix (str): Prefix used for the two saved TIFF files containing the aggregated ROIs
-        ratio_loc (float): Proportion of patches with at least one detected molecule. The remaining patches are background from the image.
+        stack (np.ndarray): (T, Y, X) stack or (Y, X) image. Converted to uint16.
+        threshold (float): detection threshold on the wavelet coefficients, in image
+            intensity units (ADU).
+        watershed (bool): if True, a watershed separates molecules that are close to each other.
+        fit (int): PALMTracer fit mode. 0: no fit, 1: Gaussian (X, Y), 2: Gaussian (X, Y, sigma),
+            3: Gaussian (X, Y, sigma_x, sigma_y), 4: Gaussian (X, Y, sigma_x, sigma_y, theta), 5: spline.
+        fit_params (np.ndarray): fit parameters. For a Gaussian fit:
+            [ROI size (pixels), initial sigma (pixels), 2 * initial sigma, theta (radians)].
 
     Returns:
-        Tuple[np.ndarray, np.ndarray]: A tuple containing:
-            - stacks_high: A 4D np array of shape (N, 1, size_ROI_crop, size_ROI_crop).
-            - stacks_low: A 4D np array of shape (N, t_window, size_ROI_crop, size_ROI_crop).
+        pd.DataFrame: one row per molecule, with columns ``Plane`` (frame index, starting at 0
+        like numpy), ``X`` and ``Y`` (sub-pixel positions, in pixels).
     """
- 
-    assert t_window_high % 2 == 1, "t_window_high must be odd (eg: 1, 3, 5, 7)"
-    assert t_window_low % 2 == 1, "t_window_low must be odd (eg: 1, 3, 5, 7)"
-    assert 0 <= ratio_loc <= 1, "ratio_loc must be between 0 and 1"
+    dll = _get_dll()
+    stk = as_c_contig(stack, np.dtype(np.uint16), writeable=False)
+    if stk.ndim == 2:
+        stk = stk[np.newaxis]                      # one image -> stack of one frame
+    params = as_c_contig(fit_params, np.dtype(np.float64), writeable=False)
+    n_frames, height, width = stk.shape
+
+    # The stack is sent to the library by blocks of frames that fit in memory
+    size_per_frame = int(height * width * DENSITY) * Parsing.N_COL_LOC
+    block_len = max(1, int(max_allocation_bytes() // 8) // size_per_frame)
+
+    tables = []
+    for start in range(0, n_frames, block_len):
+        block = np.ascontiguousarray(stk[start:start + block_len])
+        k = block.shape[0]
+        buffer = np.empty(size_per_frame * k, dtype=np.float64)
+        count = dll.Localization(block.ctypes.data_as(C_IMG), buffer.ctypes.data_as(C_TAB_DBL),
+                                 C_UINT(buffer.size), C_UINT(height), C_UINT(width), C_UINT(k),
+                                 C_DBL(threshold), C_DBL(0 if watershed else 10), C_UINT(fit),
+                                 params.ctypes.data_as(C_TAB_DBL))
+        res = Parsing.parse_result(buffer[:count], "Localization")
+        res["Plane"] += start - 1                  # PALMTracer counts frames from 1 in each block
+        tables.append(res[["Plane", "X", "Y"]])
+
+    locs = pd.concat(tables, ignore_index=True)
+    locs["Plane"] = locs["Plane"].astype(int)
+    return locs
+
+
+
+def _check_frame_numbering(stack: np.ndarray, locs: pd.DataFrame, **detect_kwargs) -> None:
+    """
+    Check that the frame numbers returned by the whole-stack detection are correct.
+
+    The frame with the most molecules is processed alone; the molecules found must be exactly
+    those found for this frame when the whole stack was processed. A shift of one frame would
+    otherwise pair the HIGH patch of a frame with the LOW patches of another one, without any error.
+
+    Args:
+        stack (np.ndarray): (T, Y, X) stack given to the detection.
+        locs (pd.DataFrame): detections of the whole stack, as returned by ``detect_points_PALM``
+            (columns ``Plane``, ``X``, ``Y``).
+        **detect_kwargs: detection parameters (``threshold``, ``watershed``, ``fit``, ``fit_params``),
+            the same as those used for ``locs``.
+
+    Raises:
+        RuntimeError: if the frame processed alone gives different molecules.
+    """
+    if locs.empty:
+        return
+    f = int(locs["Plane"].mode()[0])               # frame with the most molecules
+    alone = detect_points_PALM(stack[f], **detect_kwargs)
+    in_stack = locs[locs["Plane"] == f]
+    same = len(alone) == len(in_stack) and np.allclose(np.sort(alone["X"]), np.sort(in_stack["X"]))
+    if not same:
+        raise RuntimeError(f"Frame numbering problem: frame {f} differs when processed alone.")
+
+
+
+def _allowed_area(shape: tuple, size_ROI_crop: int, border_margin: int, margin_t: int) -> dict:
+    """
+    Compute where a patch center can be.
+
+    A patch centered there stays inside the image (minus the border), and its temporal window
+    stays inside the movie.
+
+    Args:
+        shape (tuple): (T, Y, X) shape of the stack.
+        size_ROI_crop (int): patch size, in pixels.
+        border_margin (int): pixels excluded at the image border.
+        margin_t (int): number of frames needed before and after the central frame.
+
+    Returns:
+        dict: allowed intervals (bounds included) of the patch center:
+        ``"f"`` for the frame, ``"x"`` and ``"y"`` for the position.
+    """
+    n_frames, H, W = shape
+    half = size_ROI_crop // 2
+    return {"f": (margin_t, n_frames - 1 - margin_t),
+            "x": (border_margin + half, W - border_margin - half),
+            "y": (border_margin + half, H - border_margin - half)}
+
+
+def _usable_molecules(high: np.ndarray, mask: np.ndarray, area: dict, threshold: float,
+                      size_ROI_fit: int) -> pd.DataFrame:
+    """
+    Detect the molecules on the HIGH stack and keep those that can be used as patch centers.
+
+    Args:
+        high (np.ndarray): (T, Y, X) HIGH stack.
+        mask (np.ndarray): (Y, X) mask; patch centers must be on non-zero pixels.
+        area (dict): allowed area, as returned by ``_allowed_area``.
+        threshold (float): PALMTracer detection threshold.
+        size_ROI_fit (int): size of the fitting ROI, in pixels.
+
+    Returns:
+        pd.DataFrame: usable molecules (columns ``Plane``, ``X``, ``Y``).
+    """
+    sigma = 1.0                                       # initial sigma of the Gaussian fit (pixels)
+    detect_kwargs = dict(threshold=threshold, watershed=True, fit=2,
+                         fit_params=np.array([size_ROI_fit, sigma, 2 * sigma, 0.0]))
+    locs = detect_points_PALM(high, **detect_kwargs)
+    _check_frame_numbering(high, locs, **detect_kwargs)
+    inside = locs["Plane"].between(*area["f"]) & locs["X"].between(*area["x"]) & locs["Y"].between(*area["y"])
+    locs = locs[inside]
+    return locs[mask[locs["Y"].astype(int), locs["X"].astype(int)] > 0]
+
+
+def _molecule_centers(locs: pd.DataFrame, n: int, area: dict, shift_max: int,
+                      rng: np.random.Generator) -> list:
+    """
+    Draw n molecules at random and use them as patch centers.
+
+    Each center is shifted at random by up to +/- shift_max pixels (so that the molecule is not
+    always in the middle of the patch), then brought back inside the allowed area if needed.
+
+    Args:
+        locs (pd.DataFrame): usable molecules (columns ``Plane``, ``X``, ``Y``).
+        n (int): number of centers to draw (at most ``len(locs)``).
+        area (dict): allowed area, as returned by ``_allowed_area``.
+        shift_max (int): maximum random shift, in pixels.
+        rng (np.random.Generator): random generator.
+
+    Returns:
+        list: n tuples (frame, x, y).
+    """
+    chosen = locs.sample(n=n, random_state=rng)
+    dx = rng.integers(-shift_max, shift_max + 1, n)
+    dy = rng.integers(-shift_max, shift_max + 1, n)
+    x = np.clip(np.rint(chosen["X"].to_numpy() + dx), *area["x"])
+    y = np.clip(np.rint(chosen["Y"].to_numpy() + dy), *area["y"])
+    return list(zip(chosen["Plane"], x, y))
+
+
+def _background_centers(mask: np.ndarray, n: int, area: dict, rng: np.random.Generator) -> list:
+    """
+    Draw n random patch centers: random frame, random allowed position inside the mask.
+
+    Args:
+        mask (np.ndarray): (Y, X) mask; centers are drawn on non-zero pixels.
+        n (int): number of centers to draw.
+        area (dict): allowed area, as returned by ``_allowed_area``.
+        rng (np.random.Generator): random generator.
+
+    Returns:
+        list: n tuples (frame, x, y).
+
+    Raises:
+        AssertionError: if no allowed position is inside the mask.
+    """
+    (x0, x1), (y0, y1) = area["x"], area["y"]
+    ys, xs = np.nonzero(mask[y0:y1 + 1, x0:x1 + 1])
+    assert len(xs) > 0, "No allowed patch center inside the mask."
+    k = rng.integers(0, len(xs), n)
+    frames = rng.integers(area["f"][0], area["f"][1] + 1, n)
+    return list(zip(frames, xs[k] + x0, ys[k] + y0))
+
+
+def _crop(high: np.ndarray, low: np.ndarray, f: int, x: int, y: int, size: int,
+          t_high: int, t_low: int) -> tuple:
+    """
+    Cut the same patch in the HIGH and LOW stacks.
+
+    Args:
+        high (np.ndarray): (T, Y, X) HIGH stack.
+        low (np.ndarray): (T, Y, X) LOW stack.
+        f (int): central frame.
+        x (int): column of the patch center.
+        y (int): row of the patch center.
+        size (int): patch size, in pixels.
+        t_high (int): number of HIGH frames, centered on f (odd).
+        t_low (int): number of LOW frames, centered on f (odd).
+
+    Returns:
+        tuple: HIGH patch (t_high, size, size) and LOW patch (t_low, size, size).
+    """
+    f, x, y, h = int(f), int(x), int(y), size // 2
+    rows, cols = slice(y - h, y + h), slice(x - h, x + h)
+    return (high[f - t_high // 2: f + t_high // 2 + 1, rows, cols],
+            low[f - t_low // 2: f + t_low // 2 + 1, rows, cols])
+
+
+def _save(stack_high: np.ndarray, stack_low: np.ndarray, output_dir: str, output_prefix: str) -> None:
+    """
+    Write the patches to output_dir/High/<prefix>_high_ROIs.tif and output_dir/Low/<prefix>_low_ROIs.tif.
+
+    Integer data (camera images) are saved as uint16, other data as float32.
+
+    Args:
+        stack_high (np.ndarray): (N, t_high, P, P) HIGH patches.
+        stack_low (np.ndarray): (N, t_low, P, P) LOW patches.
+        output_dir (str): output folder; the High and Low sub-folders are created if needed.
+        output_prefix (str): prefix of the two file names.
+    """
+    dtype = np.uint16 if stack_high.dtype == stack_low.dtype == np.uint16 else np.float32
+    for sub, arr in (("High", stack_high), ("Low", stack_low)):
+        folder = Path(output_dir) / sub
+        folder.mkdir(parents=True, exist_ok=True)
+        tifffile.imwrite(folder / f"{output_prefix}_{sub.lower()}_ROIs.tif", arr.astype(dtype), imagej=True)
+    print(f"{len(stack_high)} patches saved in {Path(output_dir)}")
+
+
+
+
+def build_paired_roi_stacks_batch(paths_high: list, paths_low: list, paths_mask: list = None, *,
+                                  n_patches: int = 2000, t_window_high: int = 1, t_window_low: int = 3,
+                                  threshold: float = 180.0, size_ROI_fit: int = 7, size_ROI_crop: int = 64,
+                                  border_margin: int = 5, seed: int = None, output_dir: str = "Training",
+                                  output_prefix: str = "batch", ratio_loc: float = 0.75) -> tuple:
+    """
+    Create paired (HIGH, LOW) patches to train CARE.
+
+    The molecules are detected on the HIGH stacks. A fraction ``ratio_loc`` of the patches is
+    centered (with a random shift of +/- size/4) on a molecule; the other patches are drawn at
+    random positions inside the mask. The HIGH stacks must already be aligned on the LOW stacks,
+    which stay raw.
+
+    Args:
+        paths_high (list): paths of the HIGH (target) stacks.
+        paths_low (list): paths of the LOW (input) stacks, in the same order.
+        paths_mask (list, optional): paths of 2D masks, one per stack. None: no mask.
+        n_patches (int): total number of patches, split equally between the movies.
+        t_window_high (int): number of HIGH frames per patch (odd). 1: N-to-1 model.
+        t_window_low (int): number of LOW frames per patch (odd). 1: no temporal context.
+        threshold (float): PALMTracer detection threshold, on the HIGH stacks.
+        size_ROI_fit (int): size of the PALMTracer fitting ROI, in pixels.
+        size_ROI_crop (int): patch size, in pixels.
+        border_margin (int): pixels excluded at the image border.
+        seed (int, optional): random seed; the same seed gives the same patches.
+        output_dir (str): patches are written to output_dir/High and output_dir/Low.
+        output_prefix (str): prefix of the two output files.
+        ratio_loc (float): fraction of the patches centered on a molecule (between 0 and 1).
+
+    Returns:
+        tuple: HIGH patches (N, t_window_high, P, P) and LOW patches (N, t_window_low, P, P).
+    """
+    assert t_window_high % 2 == 1 and t_window_low % 2 == 1, "Temporal windows must be odd (1, 3, 5...)."
     assert len(paths_high) == len(paths_low), "paths_high and paths_low must have the same length."
-
-    margin_t_high = t_window_high // 2 
-    margin_t_low = t_window_low // 2 
-
     rng = np.random.default_rng(seed)
-    if seed is not None:
-        random.seed(seed)
-
-    rois_high, rois_low = [], []
-    n_patches_per_stack = n_patches // len(paths_high) if n_patches is not None else None
+    margin_t = max(t_window_high, t_window_low) // 2      # frames needed before/after the central frame
+    n = n_patches // len(paths_high)                      # patches per movie
+    pairs = []
 
     for i in range(len(paths_high)):
-        path_A = paths_high[i]
-        path_B = paths_low[i]
-        stack_A = tifffile.imread(path_A)
-        stack_B = tifffile.imread(path_B)
-        n_frames, H, W = stack_A.shape
+        high, low = tifffile.imread(paths_high[i]), tifffile.imread(paths_low[i])
+        assert high.shape == low.shape, f"High {high.shape} and low {low.shape} differ: pairs would be misaligned."
+        mask = tifffile.imread(paths_mask[i]) if paths_mask else np.ones(high.shape[1:], dtype=bool)
+        area = _allowed_area(high.shape, size_ROI_crop, border_margin, margin_t)
 
-        if paths_mask is not None and paths_mask[i] is not None:
-            mask = tifffile.imread(paths_mask[i])
-        else:
-            mask = np.ones((H, W), dtype=np.uint8)
+        print(f"Movie {i + 1}/{len(paths_high)}: searching for molecules...")
+        locs = _usable_molecules(high, mask, area, threshold, size_ROI_fit)
+        n_loc = min(round(n * ratio_loc), len(locs))
+        n_bg = n - n_loc
+        print(f"  {len(locs)} usable molecules -> {n_loc} patches on a molecule, {n_bg} background patches")
 
-        min_center_x = border_margin + size_ROI_crop // 2
-        max_center_x = W - border_margin - size_ROI_crop // 2
-        min_center_y = border_margin + size_ROI_crop // 2
-        max_center_y = H - border_margin - size_ROI_crop // 2
+        centers = _molecule_centers(locs, n_loc, area, size_ROI_crop // 4, rng) + _background_centers(mask, n_bg, area, rng)
+        pairs += [_crop(high, low, f, x, y, size_ROI_crop, t_window_high, t_window_low) for f, x, y in centers]
 
-        potential_y, potential_x = np.where(mask > 0)
-        valid_idx = (potential_x >= min_center_x) & (potential_x <= max_center_x) & \
-                    (potential_y >= min_center_y) & (potential_y <= max_center_y)
-        
-        valid_x = potential_x[valid_idx]
-        valid_y = potential_y[valid_idx]
-
-        all_loc_candidates = []
-
-        # localization process
-        sigma, theta = 1.0, 0.0
-        fit_param = np.array([size_ROI_fit, sigma, 2 * sigma, theta], dtype=np.float64)
-        print(f"Stack {i+1}/{len(paths_high)}: Searching for molecules...")
-        for f in range(margin_t_low, n_frames - margin_t_low):
-            frameA_center = stack_A[f] 
-            locs = detect_points_PALM(frameA_center, threshold, True, 2, fit_param, list(range(0,10)))
-            for cx, cy in locs:
-                if (min_center_x <= cx <= max_center_x and min_center_y <= cy <= max_center_y):
-                    if mask[int(cy), int(cx)] > 0:
-                        all_loc_candidates.append((f, cx, cy))
-
-        total_locs_found = len(all_loc_candidates)
-        print(f"Number of potential molecules detected to crop around : {total_locs_found}")
-
-        # % calculation
-        if n_patches_per_stack is not None:
-            target_loc = int(n_patches_per_stack * ratio_loc)
-            target_bg = n_patches_per_stack - target_loc
-        else:
-            target_loc = total_locs_found
-            target_bg = int(target_loc * (1 - ratio_loc) / max(ratio_loc, 1e-6)) if ratio_loc < 1 else 0
-
-        if target_loc > total_locs_found:
-            print(f"Warning: {target_loc} patches requested, but only {total_locs_found} found. Change ratio.")
-            target_loc = total_locs_found
-            if ratio_loc > 0:
-                target_bg = int(target_loc * (1 - ratio_loc) / ratio_loc)
-
-        print(f"OTarget : {target_loc} patchs with molecules, {target_bg} patchs with backround.")
-
-        # random selection
-        rng.shuffle(all_loc_candidates)
-        selected_locs = all_loc_candidates[:target_loc]
-
-        selected_bgs = []
-        if len(valid_x) > 0 and target_bg > 0:
-            for _ in range(target_bg):
-                f_bg = rng.integers(margin_t_low, n_frames - margin_t_low)
-                idx = rng.integers(0, len(valid_x))
-                selected_bgs.append((f_bg, valid_x[idx], valid_y[idx]))
-
-        # extraction
-        crops_to_extract = [('loc', f, cx, cy) for f, cx, cy in selected_locs] + \
-                           [('bg', f, cx, cy) for f, cx, cy in selected_bgs]
-        rng.shuffle(crops_to_extract)
-
-        for c_type, f, cx, cy in crops_to_extract:
-            if c_type == 'loc':
-                for _try in range(10):
-                    dx = rng.integers(-size_ROI_crop // 4, size_ROI_crop // 4 + 1)
-                    dy = rng.integers(-size_ROI_crop // 4, size_ROI_crop // 4 + 1)
-                    x_c, y_c = int(round(cx + dx)), int(round(cy + dy))
-
-                    x_min, x_max = x_c - size_ROI_crop // 2, x_c + size_ROI_crop // 2
-                    y_min, y_max = y_c - size_ROI_crop // 2, y_c + size_ROI_crop // 2
-
-                    if (border_margin <= x_min and border_margin <= y_min and 
-                        x_max <= (W - border_margin) and y_max <= (H - border_margin)):
-                        break
-                else:
-                    x_min, x_max = int(cx) - size_ROI_crop // 2, int(cx) + size_ROI_crop // 2
-                    y_min, y_max = int(cy) - size_ROI_crop // 2, int(cy) + size_ROI_crop // 2
-                    if (x_min < border_margin or y_min < border_margin or 
-                        x_max > (W - border_margin) or y_max > (H - border_margin)):
-                        continue
-            else:
-                x_min, x_max = int(cx) - size_ROI_crop // 2, int(cx) + size_ROI_crop // 2
-                y_min, y_max = int(cy) - size_ROI_crop // 2, int(cy) + size_ROI_crop // 2
-
-            rA = stack_A[f - margin_t_high : f + margin_t_high + 1, y_min:y_max, x_min:x_max]
-            rB = stack_B[f - margin_t_low : f + margin_t_low + 1, y_min:y_max, x_min:x_max]
-            rois_high.append(rA)
-            rois_low.append(rB)
-
-    if not rois_high:
-        raise RuntimeError("No valid ROI found.")
-
-    stack_high = np.stack(rois_high) 
-    stack_low  = np.stack(rois_low)  
-
-    perm = rng.permutation(stack_high.shape[0])
-    stack_high = stack_high[perm]
-    stack_low  = stack_low[perm]
-
-    outA = f"{output_prefix}_high_ROIs.tif"
-    outB = f"{output_prefix}_low_ROIs.tif"
-    tifffile.imwrite(outA, stack_high.astype(np.float32), imagej=True)
-    tifffile.imwrite(outB, stack_low.astype(np.float32), imagej=True)
-
-    print(f"{stack_high.shape[0]} ROIs saved in {outA} and {outB}")
+    rng.shuffle(pairs)                                    # same order for HIGH and LOW: pairs stay together
+    stack_high = np.stack([h for h, l in pairs])
+    stack_low = np.stack([l for h, l in pairs])
+    _save(stack_high, stack_low, output_dir, output_prefix)
     return stack_high, stack_low
 
 
+
+
 if __name__ == "__main__":
-    import tifffile
-    # ---- à adapter ----
-    PATH_HIGH = "C:/.../high.tif"
-    PATH_LOW = "C:/.../low.tif"
-    COEFF_PATH = "C:/.../xxx_2CFit.txt"   # None si les piles sont déjà recalées
-    SHIFT = "low"                          # pile que tes coefficients transforment ("low" ou "high")
-    # -------------------
+    ROOT = Path(__file__).resolve().parents[2]
+    DATA = ROOT / "data" / "SIMULATION"
 
-    if COEFF_PATH is not None:
-        from processing.subpixel_transformation import subpixel_transformation
-        src = PATH_LOW if SHIFT == "low" else PATH_HIGH
-        dst = src.replace(".tif", "_shifted.tif")
-        subpixel_transformation(src, COEFF_PATH, dst)
-        if SHIFT == "low": PATH_LOW = dst
-        else: PATH_HIGH = dst
+    params = dict(t_window_high=1, t_window_low=3, threshold=15.0, size_ROI_fit=8,
+                  size_ROI_crop=64, border_margin=5, ratio_loc=0.75, seed=0)
 
-    n_high, n_low = len(tifffile.TiffFile(PATH_HIGH).pages), len(tifffile.TiffFile(PATH_LOW).pages)
-    assert n_high == n_low, f"high {n_high} images, low {n_low} images : les paires seraient décalées dans le temps"
-
-    stack_high, stack_low = build_paired_roi_stacks_batch(
-        [PATH_HIGH], [PATH_LOW],
-        n_patches=2000, t_window_high=1, t_window_low=3,
-        threshold=25.0, size_ROI_fit=8, size_ROI_crop=64, border_margin=5,
-        seed=0, output_prefix="test", ratio_loc=0.75)
-    print(stack_high.shape, stack_low.shape)
+    build_paired_roi_stacks_batch([DATA / "High.tif"], 
+                                  [DATA / "Low.tif"], 
+                                  n_patches=2000,
+                                  output_dir=DATA / "Training", 
+                                  output_prefix="train", **params)
