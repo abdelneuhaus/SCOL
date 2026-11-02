@@ -100,8 +100,8 @@ def build_paired_roi_stacks_batch(
     paths_mask: Optional[Sequence[str]] = None, 
     *,
     n_patches: Optional[int] = None,
-    t_window_high: int = 5,
-    t_window_low: int = 5,
+    t_window_high: int = 1,
+    t_window_low: int = 3,
     threshold: float = 180.0,
     size_ROI_fit: int = 7,
     size_ROI_crop: int = 8,
@@ -265,3 +265,31 @@ def build_paired_roi_stacks_batch(
 
     print(f"{stack_high.shape[0]} ROIs saved in {outA} and {outB}")
     return stack_high, stack_low
+
+
+if __name__ == "__main__":
+    import tifffile
+    # ---- à adapter ----
+    PATH_HIGH = "C:/.../high.tif"
+    PATH_LOW = "C:/.../low.tif"
+    COEFF_PATH = "C:/.../xxx_2CFit.txt"   # None si les piles sont déjà recalées
+    SHIFT = "low"                          # pile que tes coefficients transforment ("low" ou "high")
+    # -------------------
+
+    if COEFF_PATH is not None:
+        from processing.subpixel_transformation import subpixel_transformation
+        src = PATH_LOW if SHIFT == "low" else PATH_HIGH
+        dst = src.replace(".tif", "_shifted.tif")
+        subpixel_transformation(src, COEFF_PATH, dst)
+        if SHIFT == "low": PATH_LOW = dst
+        else: PATH_HIGH = dst
+
+    n_high, n_low = len(tifffile.TiffFile(PATH_HIGH).pages), len(tifffile.TiffFile(PATH_LOW).pages)
+    assert n_high == n_low, f"high {n_high} images, low {n_low} images : les paires seraient décalées dans le temps"
+
+    stack_high, stack_low = build_paired_roi_stacks_batch(
+        [PATH_HIGH], [PATH_LOW],
+        n_patches=2000, t_window_high=1, t_window_low=3,
+        threshold=25.0, size_ROI_fit=8, size_ROI_crop=64, border_margin=5,
+        seed=0, output_prefix="test", ratio_loc=0.75)
+    print(stack_high.shape, stack_low.shape)

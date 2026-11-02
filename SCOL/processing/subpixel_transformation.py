@@ -1,4 +1,5 @@
 import time
+import math 
 
 import numpy as np
 import tifffile as tiff
@@ -85,8 +86,8 @@ def shift_image_with_interpolation(image:np.ndarray, cfx:np.ndarray, cfy:np.ndar
         for x in range(w):
             nx, ny = calculate_new_coordinates(x, y, cfx, cfy)
 
-            x0 = int(nx)
-            y0 = int(ny)
+            x0 = int(math.floor(nx))
+            y0 = int(math.floor(ny))
             dx = nx - x0
             dy = ny - y0
 
@@ -167,6 +168,7 @@ def subpixel_transformation(image_path:str, coeff_path:str, output_path:str):
     # processing
     print("Processing...")
     shifted_stack = process_stack(image_stack, coeff_x, coeff_y)
+    shifted_stack = np.clip(np.round(shifted_stack), 0, 65535)
     
     # saving
     tiff.imwrite(output_path, shifted_stack.astype(np.uint16))
@@ -175,9 +177,43 @@ def subpixel_transformation(image_path:str, coeff_path:str, output_path:str):
 
 
 
+@njit(fastmath=False)
+def invert_coordinates(u, v, cfx, cfy, n_iter=20, tol=1e-9, h=1e-4):
+    """
+    Trouve (x, y) dans L tel que calculate_new_coordinates(x, y) == (u, v) dans H.
+    Newton avec jacobienne par différences finies sur TA formule.
+    Robuste au zoom, à la rotation, au cisaillement et même à un miroir.
+    """
+    x, y = float(u), float(v)                     # point de départ
+    for _ in range(n_iter):
+        tx, ty = calculate_new_coordinates(x, y, cfx, cfy)
+        ex, ey = tx - u, ty - v
+        if abs(ex) < tol and abs(ey) < tol:
+            break
+        tx1, ty1 = calculate_new_coordinates(x + h, y, cfx, cfy)
+        tx2, ty2 = calculate_new_coordinates(x, y + h, cfx, cfy)
+        a, b = (tx1 - tx) / h, (tx2 - tx) / h     # jacobienne locale :
+        c, d = (ty1 - ty) / h, (ty2 - ty) / h     # zoom, rotation, cisaillement
+        det = a * d - b * c
+        x -= ( d * ex - b * ey) / det
+        y -= (-c * ex + a * ey) / det
+    return x, y
 
-# if __name__ == "__main__":
-#     image_path  = "//filer3/TEAM_M/everyone/_Transferts/Transfert Neuhaus/2D_NUP_DATASET/5mW/LOW/U2OS-NUP96_R4-100pM_015_low.tif"
-#     coeff_path  = "data/NUP/SplitViewBeads.PT/SplitViewBeads_2CFit.txt"
-#     output_path = "//filer3/TEAM_M/everyone/_Transferts/Transfert Neuhaus/2D_NUP_DATASET/5mW/LOW_SHIFTED/U2OS-NUP96_R4-100pM_015_low_shifted.tif"
-#     subpixel_transformation(image_path, coeff_path, output_path)
+
+
+@njit(fastmath=False)
+def patch_source_coords(u0, v0, P, cfx, cfy):
+    """Pour chaque pixel (i, j) du patch high d'origine (u0, v0) : sa position exacte dans L."""
+    sx = np.empty((P, P), np.float64)
+    sy = np.empty((P, P), np.float64)
+    for i in range(P):
+        for j in range(P):
+            sx[i, j], sy[i, j] = invert_coordinates(u0 + j, v0 + i, cfx, cfy)
+    return sx, sy
+
+
+if __name__ == "__main__":
+    image_path  = "//filer3/TEAM_M/everyone/_Transferts/Transfert Neuhaus/2D_NUP_DATASET/5mW/LOW/U2OS-NUP96_R4-100pM_015_low.tif"
+    coeff_path  = "data/NUP/SplitViewBeads.PT/SplitViewBeads_2CFit.txt"
+    output_path = "//filer3/TEAM_M/everyone/_Transferts/Transfert Neuhaus/2D_NUP_DATASET/5mW/LOW_SHIFTED/U2OS-NUP96_R4-100pM_015_low_shifted.tif"
+    subpixel_transformation(image_path, coeff_path, output_path)
