@@ -340,8 +340,8 @@ if __name__ == "__main__":
     params = dict(t_window_high=1, t_window_low=3, threshold=15.0, size_ROI_fit=8,
                   size_ROI_crop=64, border_margin=5, ratio_loc=0.75, seed=0)
 
-    build_paired_roi_stacks_batch([DATA / "High.tif"], 
-                                  [DATA / "Low.tif"], 
+    build_paired_roi_stacks_batch([DATA / "high.tif"], 
+                                  [DATA / "low.tif"], 
                                   n_patches=2000,
                                   output_dir=DATA / "Training", 
                                   output_prefix="train", **params)
