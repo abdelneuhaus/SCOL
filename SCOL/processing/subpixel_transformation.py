@@ -1,22 +1,23 @@
 import time
-import math 
-
 import numpy as np
 import tifffile as tiff
-
-from typing import Union
-from numba import njit, prange
+from scipy.ndimage import map_coordinates
 
 
 def read_coefficients_from_file(file_path: str):
     """
-    Open and parse coefficients used for subpixel transformation calculation.
+    Open and parse the coefficients used for the subpixel transformation.
 
     Args:
-        path_file (str): Path to coefficient file.
+        file_path (str): Path to the coefficient file (PALMTracer 2CFit format:
+            line 2 holds the x coefficients, line 3 the y coefficients).
 
     Returns:
-        coeff_x, coeff_y (np.array): Arrays of x and y coefficients for polynomial funtion.
+        tuple[np.ndarray, np.ndarray]: x and y coefficient arrays (10 values each)
+            of the third-order polynomial.
+
+    Raises:
+        ValueError: If the file has fewer than 3 lines.
     """
     with open(file_path, "r") as f:
         lines = f.readlines()
@@ -27,157 +28,139 @@ def read_coefficients_from_file(file_path: str):
     return coeff_x, coeff_y
 
 
-
-@njit(fastmath=True)
-def calculate_new_coordinates(x:Union[float, int], y:Union[float, int], cfx:np.ndarray, cfy:np.ndarray):
+def polynomial(x: np.ndarray, y: np.ndarray, cfx: np.ndarray, cfy: np.ndarray):
     """
-    Compute third order polynomial for x and y coordinates using coefficients. Can be done on int or float.
+    Evaluate the third-order polynomial transformation on arrays of coordinates.
 
-    Note:
-        This function is decorated with @njit (Numba). First function call will be slower due to JIT compilation.
+    Term order follows the PALMTracer 2CFit convention:
+    x^3, y^3, x^2 y, x y^2, x^2, y^2, x y, x, y, 1.
 
     Args:
-        x Union[float, int]: x coordinate value.
-        y Union[float, int]: y coordinate value.
-        cfx (np.array): x coefficient file.
-        cfy (np.array): y coefficient file.
+        x (np.ndarray): x coordinates (any shape).
+        y (np.ndarray): y coordinates (same shape as ``x``).
+        cfx (np.ndarray): 10 polynomial coefficients for the x output.
+        cfy (np.ndarray): 10 polynomial coefficients for the y output.
 
     Returns:
-        new_x, new_y (tuple[float, float]): New (x,y) coordinates with transformation applied.
+        tuple[np.ndarray, np.ndarray]: Transformed (new_x, new_y) coordinates,
+            same shape as the inputs.
     """
     x2, y2 = x * x, y * y
     x3, y3 = x2 * x, y2 * y
-
-    new_x = (
-        cfx[0] * x3 + cfx[1] * y3 + cfx[2] * x2 * y + cfx[3] * x * y2 +
-        cfx[4] * x2 + cfx[5] * y2 + cfx[6] * x * y + cfx[7] * x +
-        cfx[8] * y + cfx[9]
-    )
-    new_y = (
-        cfy[0] * x3 + cfy[1] * y3 + cfy[2] * x2 * y + cfy[3] * x * y2 +
-        cfy[4] * x2 + cfy[5] * y2 + cfy[6] * x * y + cfy[7] * x +
-        cfy[8] * y + cfy[9]
-    )
+    terms = (x3, y3, x2 * y, x * y2, x2, y2, x * y, x, y, np.ones_like(x))
+    new_x = sum(c * t for c, t in zip(cfx, terms))
+    new_y = sum(c * t for c, t in zip(cfy, terms))
     return new_x, new_y
 
 
-
-@njit(fastmath=True)  # dont put parallel true to not overwrite part of image
-def shift_image_with_interpolation(image:np.ndarray, cfx:np.ndarray, cfy:np.ndarray):
+def build_sampling_grid(h: int, w: int, cfx: np.ndarray, cfy: np.ndarray):
     """
-    Apply subpixel transformation to one image by forward mapping. 
+    Compute, for every pixel of the output grid, where to sample the source image.
+
+    This is the backward-mapping grid: output pixel (x, y) takes the value of the
+    source image interpolated at ``polynomial(x, y)``. The grid depends only on
+    the image size and the coefficients, so it is computed once per stack.
 
     Note:
-        This function is decorated with @njit (Numba). First function call will be slower due to JIT compilation.
-    
+        The polynomial must map the output grid to the source image. To register
+        the HIGH channel onto the LOW grid, use the LOW -> HIGH fit (the one
+        previously used to forward-map the LOW channel).
+
     Args:
-        image (np.array): current frame
-        cfx (np.array): x coefficient file
-        cfy (np.array): y coefficient file
+        h (int): Image height in pixels.
+        w (int): Image width in pixels.
+        cfx (np.ndarray): x polynomial coefficients.
+        cfy (np.ndarray): y polynomial coefficients.
 
     Returns:
-        out(np.array): shifted frame
+        tuple[np.ndarray, np.ndarray]:
+            - coords: array of shape (2, h*w) with source (row, col) positions,
+              as expected by ``scipy.ndimage.map_coordinates``.
+            - inside: boolean mask of shape (h, w), True where the sampling
+              position falls inside the source image.
     """
-    h, w = image.shape
-    out   = np.zeros((h, w), dtype=np.float64)
-    count = np.zeros((h, w), dtype=np.float64)
+    yy, xx = np.mgrid[0:h, 0:w].astype(np.float64)
+    sx, sy = polynomial(xx, yy, cfx, cfy)
+    coords = np.stack([sy.ravel(), sx.ravel()])  # (row, col) order
+    inside = (sx >= 0) & (sx <= w - 1) & (sy >= 0) & (sy <= h - 1)
+    return coords, inside
 
-    for y in prange(h):
-        for x in range(w):
-            nx, ny = calculate_new_coordinates(x, y, cfx, cfy)
 
-            x0 = int(math.floor(nx))
-            y0 = int(math.floor(ny))
-            dx = nx - x0
-            dy = ny - y0
+def warp_stack(stack: np.ndarray, coords: np.ndarray, order: int = 1, cval: float = 0.0):
+    """
+    Apply the subpixel transformation to a whole XYT stack by backward mapping.
 
-            w00 = (1.0 - dx) * (1.0 - dy)
-            w01 = (1.0 - dx) * dy
-            w10 = dx * (1.0 - dy)
-            w11 = dx * dy
+    Each output pixel is interpolated once from the source frame, which avoids
+    the hit-count normalisation, holes and Moiré patterns of forward mapping.
 
-            if 0 <= x0 < w and 0 <= y0 < h:
-                out[y0, x0] += image[y, x] * w00
-                count[y0, x0] += w00
-            if 0 <= x0 < w and 0 <= y0 + 1 < h:
-                out[y0 + 1, x0] += image[y, x] * w01
-                count[y0 + 1, x0] += w01
-            if 0 <= x0 + 1 < w and 0 <= y0 < h:
-                out[y0, x0 + 1] += image[y, x] * w10
-                count[y0, x0 + 1] += w10
-            if 0 <= x0 + 1 < w and 0 <= y0 + 1 < h:
-                out[y0 + 1, x0 + 1] += image[y, x] * w11
-                count[y0 + 1, x0 + 1] += w11
+    Args:
+        stack (np.ndarray): Input stack of shape (n, h, w).
+        coords (np.ndarray): Sampling grid of shape (2, h*w) from
+            :func:`build_sampling_grid`.
+        order (int, optional): Interpolation order. 1 = bilinear (always
+            non-negative, slight blur), 3 = cubic spline (sharper PSF, may
+            overshoot slightly). Defaults to 1.
+        cval (float, optional): Value assigned to pixels sampled outside the
+            source image. Defaults to 0.0.
 
-    # normalize by number of hits in a pixel
-    for y in prange(h):
-        for x in range(w):
-            if count[y, x] == 0.0:
-                count[y, x] = 1.0
-            out[y, x] /= count[y, x]
-
+    Returns:
+        np.ndarray: Warped stack of shape (n, h, w), dtype float32.
+    """
+    n, h, w = stack.shape
+    out = np.empty((n, h, w), dtype=np.float32)
+    for i in range(n):
+        out[i] = map_coordinates(
+            stack[i].astype(np.float32), coords,
+            order=order, mode="constant", cval=cval, prefilter=(order > 1),
+        ).reshape(h, w)
     return out
 
 
-
-@njit(parallel=True, fastmath=True)
-def process_stack(image_stack:np.ndarray, cfx:np.ndarray, cfy:np.ndarray):
+def subpixel_transformation(image_path: str, coeff_path: str, output_path: str,
+                            order: int = 1, save_mask: bool = True):
     """
-    Perform subpixel alignment on the whole XYT stack. 
+    Main function: load a stack, register it with the polynomial fit, save it.
 
-    Note:
-        This function is decorated with @njit (Numba). First function call will be slower due to JIT compilation.
-    
+    Out-of-field pixels are filled with the median of the first frame (camera
+    background) rather than 0. A validity mask is optionally saved alongside
+    the output so that LOW and HIGH can be cropped to the common valid field
+    before patch extraction.
+
     Args:
-        image_stack (np.array): whole stack to align
-        cfx (np.array): x coefficient file
-        cfy (np.array): y coefficient file
-
-    Returns:
-        out(np.array): shifted stack
+        image_path (str): Path to the TIFF stack to shift.
+        coeff_path (str): Path to the coefficient file.
+        output_path (str): Path of the shifted TIFF stack to write.
+        order (int, optional): Interpolation order passed to
+            :func:`warp_stack`. Defaults to 1.
+        save_mask (bool, optional): If True, write ``<output>_validmask.tif``
+            (255 inside the valid field, 0 outside). Defaults to True.
     """
-    n, h, w = image_stack.shape
-    out = np.empty((n, h, w), dtype=np.float64)
-
-    for i in prange(n):
-        out[i] = shift_image_with_interpolation(image_stack[i], cfx, cfy)
-
-    return out
-
-
-
-def subpixel_transformation(image_path:str, coeff_path:str, output_path:str):
-    """
-    Main function.
-    
-    Args:
-        image_path (str): path to image to shift
-        coeff_path (str): path to coefficients file
-        output_path (str): path to save shifted image
-    """
-
     t0 = time.time()
     print("Data Loading...")
-    image_stack = tiff.imread(image_path)
-    coeff_x, coeff_y = read_coefficients_from_file(coeff_path)
-    print(f"{image_stack.shape[0]} images to shift…")
+    stack = tiff.imread(image_path)
+    if stack.ndim == 2:
+        stack = stack[None]
+    cfx, cfy = read_coefficients_from_file(coeff_path)
+    n, h, w = stack.shape
+    print(f"{n} images to shift…")
 
-    # JIT compilation
-    _ = process_stack(image_stack[:1], coeff_x, coeff_y)
+    coords, inside = build_sampling_grid(h, w, cfx, cfy)
+    cval = float(np.median(stack[0]))
 
-    # processing
     print("Processing...")
-    shifted_stack = process_stack(image_stack, coeff_x, coeff_y)
-    shifted_stack = np.clip(np.round(shifted_stack), 0, 65535)
-    
-    # saving
-    tiff.imwrite(output_path, shifted_stack.astype(np.uint16))
-    print("Image saved.")
+    warped = warp_stack(stack, coords, order=order, cval=cval)
+    warped = np.clip(np.round(warped), 0, 65535).astype(np.uint16)
+
+    tiff.imwrite(output_path, warped)
+    if save_mask:
+        tiff.imwrite(output_path.replace(".tif", "_validmask.tif"),
+                     inside.astype(np.uint8) * 255)
+    print(f"Image saved. Valid field: {inside.mean() * 100:.1f} % of pixels.")
     print(f"Finished in {time.time() - t0:.2f} second(s).")
 
 
 if __name__ == "__main__":
-    image_path  = "//filer3/TEAM_M/everyone/_Transferts/Transfert Neuhaus/2D_NUP_DATASET/5mW/LOW/U2OS-NUP96_R4-100pM_015_low.tif"
+    image_path  = "high.tif"
     coeff_path  = "data/NUP/SplitViewBeads.PT/SplitViewBeads_2CFit.txt"
-    output_path = "//filer3/TEAM_M/everyone/_Transferts/Transfert Neuhaus/2D_NUP_DATASET/5mW/LOW_SHIFTED/U2OS-NUP96_R4-100pM_015_low_shifted.tif"
-    subpixel_transformation(image_path, coeff_path, output_path)
+    output_path = "high_shifted.tif"
+    subpixel_transformation(image_path, coeff_path, output_path, order=1)
