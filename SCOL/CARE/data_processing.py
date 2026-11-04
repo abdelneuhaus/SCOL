@@ -7,7 +7,6 @@ from tifffile import imread
 from csbdeep.utils import plot_some
 
 
-
 def do_data_processing(basepath:str, save_path:str="", t_window_low:int=3, t_window_high:int=3, simulation:bool=False,
                        val_fraction:float=0.1, seed:int=0):
     """
