@@ -128,10 +128,12 @@ PROPORTIONS = [0.2, 0.4, 0.4]
 FRAME_TIME=0.02
 PIXEL_SIZE=0.16
 
-start = time.time()
-SMLM_simulation(FRAMES, N_EMITTERS, FILENAME, RANDOMIZE, MIN_INTENSITY, MAX_INTENSITY, RATIO, 
-                X_IMAGE, Y_IMAGE, LENGTH_MIN, LENGTH_MAX, BLINK_MIN, BLINK_MAX, 
-                BACKGROUND_VALUE, SD_BCKG_VALUE, IS_LOADED, MASK_PATH, NO_OVERLAP, MIN_DISTANCE,
-                DIFF_COEFF, PROPORTIONS, FRAME_TIME, PIXEL_SIZE)
-end = time.time()
-print("Time elapsed:", end - start, "seconds")
+
+if __name__ == "__main__":
+    start = time.time()
+    SMLM_simulation(FRAMES, N_EMITTERS, FILENAME, RANDOMIZE, MIN_INTENSITY, MAX_INTENSITY, RATIO, 
+                    X_IMAGE, Y_IMAGE, LENGTH_MIN, LENGTH_MAX, BLINK_MIN, BLINK_MAX, 
+                    BACKGROUND_VALUE, SD_BCKG_VALUE, IS_LOADED, MASK_PATH, NO_OVERLAP, MIN_DISTANCE,
+                    DIFF_COEFF, PROPORTIONS, FRAME_TIME, PIXEL_SIZE)
+    end = time.time()
+    print("Time elapsed:", end - start, "seconds")

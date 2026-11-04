@@ -5,3 +5,10 @@ data/
 __pycache__/
 .DS_Store
 *.log
+
+# training data and models
+models/
+*.npz
+*.tif
+*.tiff
+*.h5
