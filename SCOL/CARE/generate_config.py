@@ -30,6 +30,7 @@ def generate_training_config(data_path="", save_in="", kernel_size=3, unet_depth
         "lr": lr,
         "data_care": model_path,
         "data_val": f"{save_in}_model_val.npz",
+        "dataset_dir": str(data_path),
         "save_in": str(training_output_directory)
     }
     

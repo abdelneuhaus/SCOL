@@ -36,7 +36,7 @@ def do_data_processing(basepath:str, save_path:str="", t_window_low:int=3, t_win
     X = imread(str(low_files[0])).astype(np.float32)
     Y = imread(str(high_files[0])).astype(np.float32)
 
-    # handling of dimension: ImageJ TIFs drop axes of size 1, so (N, 1, P, P) is read back as (N, P, P)
+    # handling of dimgit status ension: ImageJ TIFs drop axes of size 1, so (N, 1, P, P) is read back as (N, P, P)
     if X.ndim == 3:
         X = np.expand_dims(X, axis=1)
     if Y.ndim == 3:
