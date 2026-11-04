@@ -1,7 +1,5 @@
 import matplotlib.pyplot as plt
 
-from care.custom_losses import loss_custom_spt_data, loss_custom_fixed_data, loss_custom_fixed_data_v2
-
 from csbdeep.models import Config, CARE
 from csbdeep.io import load_training_data
 from csbdeep.utils import axes_dict, plot_history
@@ -10,7 +8,7 @@ from csbdeep.utils import axes_dict, plot_history
 
 def do_training(kernel_size:int=5, unet_depth:int=2, unet_first_layer:int=64, train_epochs:int=40, 
                 lr=4e-4, data_care:str="model.npz", data_val:str="model_val.npz", save_in:str="current_directory",
-                loss_choice='MSE Standard (CSBDeep)', loss_params=None):
+                loss_choice='MAE (CSBDeep)'):
     
     """
     Perform the training using 2D-CARE network.
@@ -26,6 +24,7 @@ def do_training(kernel_size:int=5, unet_depth:int=2, unet_first_layer:int=64, tr
         data_care (str): path to NPZ file (training data).
         data_val (str): path to NPZ file (validation data, split by do_data_processing).
         save_in (str): path to save the trained model.
+        loss_choice (str): loss function. Only 'MAE (CSBDeep)' for now.
     Returns:
         None. Save the 2D-CARE model and display losses curves.
     """
@@ -57,24 +56,8 @@ def do_training(kernel_size:int=5, unet_depth:int=2, unet_first_layer:int=64, tr
 
     model.prepare_for_training()
 
-
-    if loss_choice == 'MSE Standard (CSBDeep)':
-        print("Using MSE loss.")
-        pass 
-        
-
-    elif loss_choice == 'Custom SSIM+MSE (Fixed Data)':
-        gamma = loss_params['gamma'] if loss_params else 2.0
-        alpha = loss_params['alpha'] if loss_params else 0.65
-        model.keras_model.compile(optimizer=model.keras_model.optimizer, 
-                                  loss=loss_custom_fixed_data(gamma=gamma, alpha=alpha), 
-                                  metrics=['mse', 'mae'])
-        
-    elif loss_choice == 'Custom SPT Data':
-        spt_val = loss_params['spt_val'] if loss_params else 20        
-        model.keras_model.compile(optimizer=model.keras_model.optimizer, 
-                                  loss=loss_custom_spt_data(spt_val), 
-                                  metrics=['mse', 'mae'])
+    assert loss_choice == 'MAE', f"Unknown loss: {loss_choice}"
+    print("Using MAE loss (CSBDeep standard).")
 
     model.keras_model.summary()
     history = model.train(X,Y, validation_data=(X_val,Y_val))
