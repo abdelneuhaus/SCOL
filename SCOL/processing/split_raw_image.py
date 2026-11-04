@@ -26,5 +26,6 @@ def split_raw_image(image_path:str, start_x:int, start_y:int, roi_width:int, roi
 
     high_snr = img[..., y1_start:y1_end, x_start:x_end]
     low_snr = img[..., y2_start:y2_end, x_start:x_end]
-
+    print("Splitting done. Saving...")
+    
     return high_snr, low_snr
