@@ -7,7 +7,7 @@ from tifffile import imread
 from csbdeep.utils import plot_some
 
 
-def do_data_processing(basepath:str, save_path:str="", t_window_low:int=3, t_window_high:int=3, simulation:bool=False,
+def do_data_processing(basepath:str, save_path:str="", t_window_low:int=3, t_window_high:int=1,
                        val_fraction:float=0.1, seed:int=0):
     """
     Prepare the .npz data for CARE training. 
@@ -18,7 +18,6 @@ def do_data_processing(basepath:str, save_path:str="", t_window_low:int=3, t_win
         savepath (str): path to save the NPZ file.
         t_window_low (int): number of consecutive frames to use to create noisy training data (X)
         t_window_high (int): number of consecutive frames to use to create target training data (Y)
-        simulation (bool): if True, ignore temporal window (1-to-1). To use for simulation images only.
         val_fraction (float): fraction of the patches drawn at random for validation (0.05 to 0.15).
         seed (int): random seed of the split; the same seed gives the same split.
 
@@ -37,24 +36,12 @@ def do_data_processing(basepath:str, save_path:str="", t_window_low:int=3, t_win
     X = imread(str(low_files[0])).astype(np.float32)
     Y = imread(str(high_files[0])).astype(np.float32)
 
-    # handling of dimension
+    # handling of dimension: ImageJ TIFs drop axes of size 1, so (N, 1, P, P) is read back as (N, P, P)
     if X.ndim == 3:
         X = np.expand_dims(X, axis=1)
     if Y.ndim == 3:
         Y = np.expand_dims(Y, axis=1)
     assert X.shape[0] == Y.shape[0], f"Low ({X.shape[0]}) and High ({Y.shape[0]}) do not have the same number of patches."
-
-    # if simulation:
-    #     if X.ndim == 3:
-    #         X = np.expand_dims(X, axis=1)
-    #     if Y.ndim == 3:
-    #         Y = np.expand_dims(Y, axis=1)
-    # else:
-    #     # default
-    #     if X.ndim == 3:
-    #         X = np.expand_dims(X, axis=0)
-    #     if Y.ndim == 3:
-    #         Y = np.expand_dims(Y, axis=0)
 
     print(f"\nTemporal extraction: {t_window_low} frame(s) for X, {t_window_high} frame(s) for Y.")
     
