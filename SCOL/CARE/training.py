@@ -9,7 +9,7 @@ from csbdeep.utils import axes_dict, plot_history
 
 
 def do_training(kernel_size:int=5, unet_depth:int=2, unet_first_layer:int=64, train_epochs:int=40, 
-                lr=4e-4, data_care:str="model.npz", save_in:str="current_directory",
+                lr=4e-4, data_care:str="model.npz", data_val:str="model_val.npz", save_in:str="current_directory",
                 loss_choice='MSE Standard (CSBDeep)', loss_params=None):
     
     """
@@ -23,13 +23,15 @@ def do_training(kernel_size:int=5, unet_depth:int=2, unet_first_layer:int=64, tr
         train_epochs (int): number of epochs to train the network
         lr (float): initial learning rate value.
         steps_epochs (int): number of steps per epochs
-        data_care (str): path to NPZ file
+        data_care (str): path to NPZ file (training data).
+        data_val (str): path to NPZ file (validation data, split by do_data_processing).
         save_in (str): path to save the trained model.
     Returns:
         None. Save the 2D-CARE model and display losses curves.
     """
 
-    (X,Y), (X_val,Y_val), axes = load_training_data(data_care, validation_split=0.1, verbose=True)
+    (X,Y), _, axes = load_training_data(data_care, validation_split=0, verbose=True)
+    (X_val,Y_val), _, _ = load_training_data(data_val, validation_split=0, verbose=True)
     c = axes_dict(axes)['Z']
 
     n_chan_in = X.shape[-1] if len(X.shape) == 4 else 1

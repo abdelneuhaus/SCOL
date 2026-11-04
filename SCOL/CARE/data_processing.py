@@ -8,7 +8,8 @@ from csbdeep.utils import plot_some
 
 
 
-def do_data_processing(basepath:str, save_path:str="", t_window_low:int=3, t_window_high:int=3, simulation:bool=False):
+def do_data_processing(basepath:str, save_path:str="", t_window_low:int=3, t_window_high:int=3, simulation:bool=False,
+                       val_fraction:float=0.1, seed:int=0):
     """
     Prepare the .npz data for CARE training. 
     Adapted from https://github.com/CSBDeep/CSBDeep code. 
@@ -19,9 +20,11 @@ def do_data_processing(basepath:str, save_path:str="", t_window_low:int=3, t_win
         t_window_low (int): number of consecutive frames to use to create noisy training data (X)
         t_window_high (int): number of consecutive frames to use to create target training data (Y)
         simulation (bool): if True, ignore temporal window (1-to-1). To use for simulation images only.
+        val_fraction (float): fraction of the patches drawn at random for validation (0.05 to 0.15).
+        seed (int): random seed of the split; the same seed gives the same split.
 
     Returns:
-        None. Save the NPZ file and show some training paired dataset.
+        None. Save the training and validation NPZ files and show some training paired dataset.
     """
 
     base = Path(basepath)  
@@ -41,7 +44,7 @@ def do_data_processing(basepath:str, save_path:str="", t_window_low:int=3, t_win
     if Y.ndim == 3:
         Y = np.expand_dims(Y, axis=1)
     assert X.shape[0] == Y.shape[0], f"Low ({X.shape[0]}) and High ({Y.shape[0]}) do not have the same number of patches."
-    
+
     # if simulation:
     #     if X.ndim == 3:
     #         X = np.expand_dims(X, axis=1)
@@ -78,13 +81,20 @@ def do_data_processing(basepath:str, save_path:str="", t_window_low:int=3, t_win
         save_path = str(basepath).replace('Training/', 'model.npz')
     else:
         save_path += "_model.npz"
-        
+    val_path = os.path.splitext(save_path)[0] + "_val.npz"
+
+    # random train / validation split: the same indices are used for X and Y
+    assert 0.05 <= val_fraction <= 0.15, "val_fraction must be between 0.05 and 0.15."
+    idx = np.random.default_rng(seed).permutation(X.shape[0])
+    n_val = round(val_fraction * X.shape[0])
+    val_idx, train_idx = idx[:n_val], idx[n_val:]
+
     os.makedirs(os.path.dirname(save_path), exist_ok=True)
     axes = 'SCYX' 
-    np.savez(save_path, X=X, Y=Y, axes=axes)
-    print("\nSave in :", save_path)
-    print("Shape of X =", X.shape)
-    print("Shape of Y =", Y.shape)
+    np.savez(save_path, X=X[train_idx], Y=Y[train_idx], axes=axes)
+    np.savez(val_path, X=X[val_idx], Y=Y[val_idx], axes=axes)
+    print("\nTraining   :", save_path, "| X", X[train_idx].shape, "| Y", Y[train_idx].shape)
+    print("Validation :", val_path, "| X", X[val_idx].shape, "| Y", Y[val_idx].shape)
     print("Axes       =", axes)
     
     # display some training data
