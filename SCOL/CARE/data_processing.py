@@ -35,18 +35,24 @@ def do_data_processing(basepath:str, save_path:str="", t_window_low:int=3, t_win
     X = imread(str(low_files[0])).astype(np.float32)
     Y = imread(str(high_files[0])).astype(np.float32)
 
-    # handling of dimension (for simulation)
-    if simulation:
-        if X.ndim == 3:
-            X = np.expand_dims(X, axis=1)
-        if Y.ndim == 3:
-            Y = np.expand_dims(Y, axis=1)
-    else:
-        # default
-        if X.ndim == 3:
-            X = np.expand_dims(X, axis=0)
-        if Y.ndim == 3:
-            Y = np.expand_dims(Y, axis=0)
+    # handling of dimension
+    if X.ndim == 3:
+        X = np.expand_dims(X, axis=1)
+    if Y.ndim == 3:
+        Y = np.expand_dims(Y, axis=1)
+    assert X.shape[0] == Y.shape[0], f"Low ({X.shape[0]}) and High ({Y.shape[0]}) do not have the same number of patches."
+    
+    # if simulation:
+    #     if X.ndim == 3:
+    #         X = np.expand_dims(X, axis=1)
+    #     if Y.ndim == 3:
+    #         Y = np.expand_dims(Y, axis=1)
+    # else:
+    #     # default
+    #     if X.ndim == 3:
+    #         X = np.expand_dims(X, axis=0)
+    #     if Y.ndim == 3:
+    #         Y = np.expand_dims(Y, axis=0)
 
     print(f"\nTemporal extraction: {t_window_low} frame(s) for X, {t_window_high} frame(s) for Y.")
     
