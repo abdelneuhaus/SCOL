@@ -5,6 +5,9 @@ def apply_data_augmentation_to_npz(npz_path:str):
     """
     Perfom data augmentation (8 times) of training images contained in NPZ file format.
 
+    The file is marked as augmented: a second call does nothing. To start again from the
+    original patches, run the dataset generation again.
+
     Args:
         npz_path (str): path to NPZ file (training data).
 
@@ -14,6 +17,10 @@ def apply_data_augmentation_to_npz(npz_path:str):
     print(f"\n--- Beginning of data augmentation of {npz_path} ---")
     
     data = np.load(npz_path)
+    if 'augmented' in data.files:
+        print(f"Already augmented ({data['X'].shape[0]} ROIs): nothing done. Run the dataset generation again to start from the original patches.")
+        return
+
     X, Y = data['X'], data['Y']
     axes_str = str(data['axes']) if data['axes'].shape == () else str(data['axes'][0])
     X_aug, Y_aug = [], []
@@ -36,7 +43,7 @@ def apply_data_augmentation_to_npz(npz_path:str):
     X_final = X_final[perm]
     Y_final = Y_final[perm]
     
-    # 4. Sauvegarde par-dessus le fichier existant
-    np.savez(npz_path, X=X_final, Y=Y_final, axes=axes_str)
+    # overwrite the training file, marked as augmented
+    np.savez(npz_path, X=X_final, Y=Y_final, axes=axes_str, augmented=True)
     
     print(f"Finshed : dataset now have {X_final.shape[0]} ROIs.")
