@@ -4,7 +4,9 @@ Detection part adapted from https://github.com/tmonseigne/palm-tracer
 """
 
 import sys
+import json
 import ctypes
+from datetime import datetime
 from functools import lru_cache
 from pathlib import Path
 
@@ -324,10 +326,21 @@ def build_paired_roi_stacks_batch(paths_high: list, paths_low: list, paths_mask:
         centers = _molecule_centers(locs, n_loc, area, size_ROI_crop // 4, rng) + _background_centers(mask, n_bg, area, rng)
         pairs += [_crop(high, low, f, x, y, size_ROI_crop, t_window_high, t_window_low) for f, x, y in centers]
 
-    rng.shuffle(pairs)                                    # same order for HIGH and LOW: pairs stay together
+    
+    rng.shuffle(pairs)  # same order for HIGH and LOW: pairs stay together
     stack_high = np.stack([h for h, l in pairs])
     stack_low = np.stack([l for h, l in pairs])
     _save(stack_high, stack_low, output_dir, output_prefix)
+
+    # parameters of this dataset, next to the patches
+    info = {"date": datetime.now().isoformat(timespec="seconds"),
+            "paths_high": [str(p) for p in paths_high], "paths_low": [str(p) for p in paths_low],
+            "paths_mask": [str(p) for p in paths_mask] if paths_mask else None,
+            "n_patches": len(stack_high), "t_window_high": t_window_high, "t_window_low": t_window_low,
+            "threshold": threshold, "size_ROI_fit": size_ROI_fit, "size_ROI_crop": size_ROI_crop,
+            "border_margin": border_margin, "ratio_loc": ratio_loc, "seed": seed}
+    with open(Path(output_dir) / "dataset_info.json", "w") as f:
+        json.dump(info, f, indent=2)
     return stack_high, stack_low
 
 

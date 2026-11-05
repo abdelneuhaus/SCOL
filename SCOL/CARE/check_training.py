@@ -57,11 +57,12 @@ def check_training_3D(network:str, low_path:str, high_path:str, n:int=3):
 
 
 
-start= time.time()
+if __name__ == "__main__":
+    start = time.time()
 
-low_path = 'data/GROUND_TRUTH/SIMULATION/metrics_simu/fixed/noisy.tif'
-high_path = 'data/GROUND_TRUTH/SIMULATION/metrics_simu/fixed/target.tif'
-check_training_3D('C:/Git/SCOL/models/data/SIMU/TEST/models/k3_d1_f64', n=3)
+    low_path = 'data/GROUND_TRUTH/SIMULATION/metrics_simu/fixed/noisy.tif'
+    high_path = 'data/GROUND_TRUTH/SIMULATION/metrics_simu/fixed/target.tif'
+    check_training_3D('C:/Git/SCOL/models/data/SIMU/TEST/models/k3_d1_f64', low_path, high_path, n=3)
 
-end = time.time()
-print((end-start)/60, "minutes")
+    end = time.time()
+    print((end - start) / 60, "minutes")
