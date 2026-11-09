@@ -8,7 +8,7 @@ The training pairs come from a **dual-view acquisition**: one camera image is sp
 channel (**HIGH**, the training target) and a low-SNR channel (**LOW**, the network input). Both
 channels see the same scene at the same time, with a different number of photons.
 
-## Repository layout
+## Current repository layout
 
 ```
 SCOL/
