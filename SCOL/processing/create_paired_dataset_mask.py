@@ -81,7 +81,8 @@ def build_paired_roi_stacks_with_mask(paths_high: list, paths_low: list, paths_m
                                       threshold: float = 180.0, size_ROI_fit: int = 7, size_ROI_crop: int = 64,
                                       border_margin: int = 5, seed: int = None, output_dir: str = "Training_L5",
                                       output_prefix: str = "patches", ratio_loc: float = 0.75,
-                                      mask_size: int = 7, threshold_mask: float = None) -> tuple:
+                                      mask_size: int = 7, threshold_mask: float = None,
+                                      ghost_sites: bool = True, ghost_min_dist: float = 3.0) -> tuple:
     """
     Create paired (HIGH, LOW) patches and their localization masks, to train CARE with the L5 loss.
 
@@ -107,6 +108,10 @@ def build_paired_roi_stacks_with_mask(paths_high: list, paths_low: list, paths_m
         ratio_loc (float): fraction of the patches centered on a molecule (between 0 and 1).
         mask_size (int): side of the square drawn around each detection, in pixels.
         threshold_mask (float, optional): PALMTracer detection threshold for the mask. None: same as threshold.
+        ghost_sites (bool): also mark the ghost sites with 2: squares around the molecules of frames t - 1
+            and t + 1, where there is no molecule square at t.
+        ghost_min_dist (float): a molecule of t - 1 or t + 1 closer than this (pixels) to a molecule of t is
+            the same molecule, still present: no ghost square.
 
     Returns:
         tuple: HIGH patches (N, 1, P, P), LOW patches (N, t_window_low, P, P) and masks (N, 1, P, P).
@@ -140,6 +145,16 @@ def build_paired_roi_stacks_with_mask(paths_high: list, paths_low: list, paths_m
         for f, x, y in centers:
             h, l = _crop(high, low, f, x, y, size_ROI_crop, t_window_high, t_window_low)
             m = _draw_mask(detections.get(int(f), empty), int(x), int(y), size_ROI_crop, mask_size)
+            if ghost_sites:
+                # 2 = ghost site: a molecule at t - 1 or t + 1 with no molecule at t closer than ghost_min_dist
+                # (the squares of t stay 1)
+                now = detections.get(int(f), empty)
+                near = np.concatenate([detections.get(int(f) - 1, empty), detections.get(int(f) + 1, empty)])
+                if len(now) and len(near):
+                    dist = np.linalg.norm(near[:, None, :] - now[None, :, :], axis=2).min(axis=1)
+                    near = near[dist >= ghost_min_dist]
+                g = _draw_mask(near, int(x), int(y), size_ROI_crop, mask_size)
+                m[(g == 1) & (m == 0)] = 2
             triplets.append((h, l, m[np.newaxis]))
 
     rng.shuffle(triplets)                                 # same order for HIGH, LOW and mask
@@ -158,8 +173,11 @@ def build_paired_roi_stacks_with_mask(paths_high: list, paths_low: list, paths_m
             "threshold": threshold, "size_ROI_fit": size_ROI_fit, "size_ROI_crop": size_ROI_crop,
             "border_margin": border_margin, "ratio_loc": ratio_loc, "seed": seed,
             "mask_size": mask_size, "threshold_mask": threshold_mask,
-            "mask_fraction": float(stack_mask.mean()), "pixel_center": PIXEL_CENTER}
+            "ghost_sites": ghost_sites, "ghost_min_dist": ghost_min_dist,
+            "mask_fraction": float((stack_mask == 1).mean()), "ghost_fraction": float((stack_mask == 2).mean()),
+            "pixel_center": PIXEL_CENTER}
     with open(Path(output_dir) / "dataset_info.json", "w") as f:
         json.dump(info, f, indent=2)
-    print(f"Masks: {stack_mask.mean() * 100:.1f} % of the pixels, saved in {folder}")
+    print(f"Masks: molecules {(stack_mask == 1).mean() * 100:.1f} %, ghost sites {(stack_mask == 2).mean() * 100:.1f} % "
+          f"of the pixels, saved in {folder}")
     return stack_high, stack_low, stack_mask

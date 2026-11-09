@@ -120,23 +120,33 @@ def _predicted_squares(y_pred, threshold, mask_size):
 
 # ---------------------------------------------------------------- loss and metrics
 
-def loss_l5(w: float = 10.0, lam: float = 0.0, threshold: float = 200.0, mask_size: int = 7):
+def _split_mask(y_true):
+    """Mask channel of y_true -> (molecule squares, ghost sites). Values: 1 = molecule at t, 2 = ghost site, 0 = background."""
+    mask = y_true[..., 1:2]
+    return tf.cast(tf.equal(mask, 1.0), tf.float32), tf.cast(tf.equal(mask, 2.0), tf.float32)
+
+
+def loss_l5(w: float = 10.0, lam: float = 0.0, threshold: float = 200.0, mask_size: int = 7, w_ghost: float = 0.0):
     """
-    L5 loss (symmetric version). y_true[..., 0] is the HIGH image, y_true[..., 1] the target mask.
+    L5 loss (symmetric version). y_true[..., 0] is the HIGH image, y_true[..., 1] the target mask
+    (1 = molecule at t, 2 = ghost site, 0 = background).
 
     Args:
         w (float): extra weight of the errors in the target and predicted squares.
         lam (float): extra weight of the errors in the predicted squares without a target square (invented spots).
         threshold (float): wavelet threshold (ADU) to find the spots drawn by the network; same as PALMTracer on the HIGH.
         mask_size (int): side of the squares, same as the target mask.
+        w_ghost (float): extra weight of the errors in the ghost sites (molecule at t - 1 or t + 1, none at t).
+            w_ghost = w: a ghost costs as much as a missed molecule.
 
     Returns:
         function: Keras loss.
     """
     def l5(y_true, y_pred):
-        y, m = y_true[..., 0:1], y_true[..., 1:2]
+        y = y_true[..., 0:1]
+        m, g = _split_mask(y_true)
         pm = _predicted_squares(y_pred, threshold, mask_size)
-        W = 1.0 + w * tf.maximum(m, pm) + lam * pm * (1.0 - m)
+        W = 1.0 + w * tf.maximum(m, pm) + lam * pm * (1.0 - m) + w_ghost * g
         return tf.reduce_mean(W * tf.abs(y_pred - y))
     return l5
 
@@ -153,14 +163,20 @@ def mse_img(y_true, y_pred):
 
 def mae_mol(y_true, y_pred):
     """MAE on the pixels of the target squares only (how well the molecules are drawn)."""
-    m = y_true[..., 1:2]
+    m, _ = _split_mask(y_true)
     return tf.reduce_sum(m * tf.abs(y_pred - y_true[..., 0:1])) / (tf.reduce_sum(m) + 1.0)
+
+
+def mae_ghost(y_true, y_pred):
+    """MAE on the pixels of the ghost sites only (faint ghosts included): lower = fewer ghosts."""
+    _, g = _split_mask(y_true)
+    return tf.reduce_sum(g * tf.abs(y_pred - y_true[..., 0:1])) / (tf.reduce_sum(g) + 1.0)
 
 
 def fp_spots_metric(threshold: float = 200.0):
     """Metric: number of spots drawn by the network outside the target squares, per patch."""
     def fp_spots(y_true, y_pred):
-        m = y_true[..., 1:2]
+        m, _ = _split_mask(y_true)
         return tf.reduce_sum(_spots(y_pred, threshold) * (1.0 - m)) / tf.cast(tf.shape(y_pred)[0], tf.float32)
     return fp_spots
 
@@ -199,8 +215,8 @@ def test_loss_l5(w: float = 10.0, lam: float = 10.0, threshold: float = 200.0, m
 
 def do_training_l5(data_train: str, data_val: str, models_root: str, kernel_size: int = 3, unet_depth: int = 2,
                    unet_first_layer: int = 64, train_epochs: int = 100, lr: float = 1e-4, w: float = 10.0,
-                   lam: float = 0.0, threshold: float = 200.0, mask_size: int = 7, seed: int = 0,
-                   dataset_dir: str = None):
+                   lam: float = 0.0, threshold: float = 200.0, mask_size: int = 7, w_ghost: float = 0.0,
+                   seed: int = 0, dataset_dir: str = None):
     """
     Train a 2D-CARE network (N-to-1, one output) with the L5 loss.
 
@@ -214,7 +230,7 @@ def do_training_l5(data_train: str, data_val: str, models_root: str, kernel_size
         kernel_size, unet_depth, unet_first_layer: U-Net architecture.
         train_epochs (int): number of epochs.
         lr (float): initial learning rate.
-        w, lam, threshold, mask_size: L5 parameters (see loss_l5). w = lam = 0: standard MAE.
+        w, lam, threshold, mask_size, w_ghost: L5 parameters (see loss_l5). w = lam = w_ghost = 0: standard MAE.
         seed (int): random seed.
         dataset_dir (str, optional): dataset folder; its dataset_info.json is copied into run_info.json.
 
@@ -227,7 +243,7 @@ def do_training_l5(data_train: str, data_val: str, models_root: str, kernel_size
     assert Y.shape[-1] == 2, "Y must have 2 channels (HIGH image + mask): use do_data_processing_l5."
     T = X.shape[-1]
 
-    signature = f"L5_w{w:g}_lam{lam:g}_k{kernel_size}d{unet_depth}l{unet_first_layer}_T{T}"
+    signature = f"L5_w{w:g}_lam{lam:g}_g{w_ghost:g}_k{kernel_size}d{unet_depth}l{unet_first_layer}_T{T}"
     n = 1
     while (Path(models_root) / f"{signature}_{n:04d}").exists():
         n += 1
@@ -241,15 +257,15 @@ def do_training_l5(data_train: str, data_val: str, models_root: str, kernel_size
     model = CARE(config, f"{signature}_{n:04d}", basedir=str(models_root))
     model.prepare_for_training()
     model.keras_model.compile(optimizer=model.keras_model.optimizer,
-                              loss=loss_l5(w, lam, threshold, mask_size),
-                              metrics=[mae_img, mse_img, mae_mol, fp_spots_metric(threshold)])
+                              loss=loss_l5(w, lam, threshold, mask_size, w_ghost),
+                              metrics=[mae_img, mse_img, mae_mol, mae_ghost, fp_spots_metric(threshold)])
 
     info_path = Path(dataset_dir) / "dataset_info.json" if dataset_dir else None
     run_info = {
         "date": datetime.now().isoformat(timespec="seconds"),
         "git": _git_info(),
-        "loss": "L5" if (w or lam) else "MAE (L5 code, w = lam = 0)",
-        "loss_params": {"w": w, "lam": lam, "threshold": threshold, "mask_size": mask_size},
+        "loss": "L5" if (w or lam or w_ghost) else "MAE (L5 code, w = lam = w_ghost = 0)",
+        "loss_params": {"w": w, "lam": lam, "w_ghost": w_ghost, "threshold": threshold, "mask_size": mask_size},
         "seed": seed,
         "t_window_low": T, "t_window_high": 1,
         "hyperparameters": {"kernel_size": kernel_size, "unet_depth": unet_depth, "unet_first_layer": unet_first_layer,
@@ -271,6 +287,6 @@ def do_training_l5(data_train: str, data_val: str, models_root: str, kernel_size
 
     plt.figure(figsize=(16, 8))
     plot_history(history, ["loss", "val_loss"], ["mae_img", "val_mae_img"],
-                 ["mae_mol", "val_mae_mol"], ["fp_spots", "val_fp_spots"])
+                 ["mae_mol", "val_mae_mol"], ["mae_ghost", "val_mae_ghost"], ["fp_spots", "val_fp_spots"])
     plt.show()
     return history
