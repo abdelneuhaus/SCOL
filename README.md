@@ -113,14 +113,6 @@ L5 = mean(W · |prediction − HIGH|)
 at equal number of detections, mostly a threshold effect. Not used by default.
 
 ## Practical notes
-- **Temporal window.** With `t_window_low = 3` the network uses frames t − 1 and t + 1: much better
-  detection than with 1 frame, but frame-to-frame displacements are shortened by about 20 % (MSD at
-  lag 1 underestimated). The diffusion coefficient from the slope of the MSD over 4 lags is preserved.
-  Report D from the MSD slope, not from single jumps.
-- **Faint dots in the background** (T = 3): below the detection threshold, no effect on the Jaccard
-  index or on D. They come from the noise of the HIGH target. Use the same display range for all
-  methods in figures.
-- **PALMTracer pixel convention:** the center of pixel i is at coordinate i.
 - **Acquisitions.** Fix the camera ROI and the split ROIs for a whole session; image beads at the
   start and at the end (2CFit, drift). Make the HIGH as clean as possible; set the LOW to the level of
   the data you want to denoise. CARE helps in a window: no gain if the LOW is already good, no
