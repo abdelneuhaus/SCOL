@@ -16,7 +16,7 @@ SCOL/
 │   ├── split_raw_image.py          split a dual-view movie into HIGH and LOW
 │   ├── subpixel_transformation.py  register the HIGH onto the LOW grid (polynomial from PALMTracer 2CFit)
 │   ├── create_paired_dataset.py    paired (HIGH, LOW) patches centered on molecules (PALMTracer detection)
-│   ├── create_paired_dataset_mask.py   same patches + localization masks (experimental L5 loss)
+│   ├── create_paired_dataset_mask.py   same patches + localization masks (localization-weighted MAE)
 │   ├── measure_residual_shift.py   residual HIGH/LOW misalignment after registration
 │   ├── Parsing.py, utils.py        PALMTracer outputs and helpers
 │   └── DLL/                        PALMTracer libraries (.dylib for macOS, .dll for Windows)
@@ -25,7 +25,7 @@ SCOL/
 │   ├── data_augmentation.py        rotations and flips (x8), training set only
 │   ├── generate_config.py          training configuration
 │   ├── training.py                 CARE training (MAE loss), run_info.json in the model folder
-│   ├── l5.py                       experimental L5 loss (MAE weighted by localization masks)
+│   ├── l5.py                       experimental localization-weighted MAE
 │   ├── prediction.py               denoising of a movie with a trained model
 │   └── check_training.py           visual check of a training run
 ├── notebooks/
@@ -33,8 +33,8 @@ SCOL/
 │   ├── CARE_training.ipynb         .npz, augmentation, training
 │   ├── CARE_prediction.ipynb       denoising with a trained model
 │   ├── N2S_denoising.ipynb         Noise2Self baseline (kernel "Python (Aydin)")
-│   ├── test_L5_dataset.ipynb       patches + masks for the L5 loss
-│   └── test_L5_training.ipynb      training with the L5 loss
+│   ├── test_L5_dataset.ipynb       patches + masks for the localization-weighted MAE
+│   └── test_L5_training.ipynb      training with the localization-weighted MAE
 └── utils/
     ├── simulator/                  simulated single-molecule movies
     ├── metrics.py                  coordinate comparison on simulated data
@@ -100,13 +100,14 @@ for all, on the same frames. Compare to the registered HIGH:
 
 Evaluate on a movie that was not used for training.
 
-## Experimental: L5 loss (`CARE/l5.py`)
-MAE weighted by the PALMTracer localizations of the HIGH (mask = second channel of Y, read by the
-loss only; the model and the prediction are unchanged):
+## Experimental: localization-weighted MAE (`CARE/l5.py`)
+Pixel-wise weighted L1 loss. The weights come from the PALMTracer localizations of the HIGH (mask =
+second channel of Y, read by the loss only; the model and the prediction are unchanged) and from the
+spots drawn by the network. In the code and in the model names, this loss is called `L5`.
 
 ```
-W  = 1 + w · (target squares ∪ predicted squares) + λ · (predicted squares \ target squares)
-L5 = mean(W · |prediction − HIGH|)
+W    = 1 + w · (target squares ∪ predicted squares) + λ · (predicted squares \ target squares)
+loss = mean(W · |prediction − HIGH|)
 ```
 
 `w = λ = 0` gives the standard MAE. On tracking data, `w = 10, λ = 10` gave about +0.01 in Jaccard
